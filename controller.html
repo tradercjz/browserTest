@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>AI Agent 全功能控制台</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; background: #f0f2f5; }
+        .header { text-align: center; margin-bottom: 20px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+        .card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .full-width { grid-column: span 2; }
+        
+        h3 { margin-top: 0; color: #333; font-size: 16px; border-bottom: 1px solid #eee; padding-bottom: 8px; }
+        label { display: block; margin: 5px 0 2px; font-size: 12px; color: #666; }
+        input, textarea { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ddd; border-radius: 4px; }
+        button { width: 100%; background: #007bff; color: white; border: none; padding: 10px; cursor: pointer; border-radius: 4px; margin-top: 10px; }
+        button:hover { background: #0056b3; }
+        button.secondary { background: #6c757d; }
+        
+        #screenshot-preview { width: 100%; border: 1px dashed #ccc; min-height: 100px; margin-top: 10px; display: flex; align-items: center; justify-content: center; }
+        #screenshot-preview img { max-width: 100%; border-radius: 4px; }
+        
+        .log-box { background: #2d2d2d; color: #00ff00; padding: 10px; height: 150px; overflow-y: scroll; font-family: monospace; font-size: 12px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>🎮 AI Agent 控制台</h1>
+        <!-- 这里的 input 会被 injector.js 自动填充 -->
+        <input type="text" id="extId" placeholder="等待插件注入 ID..." readonly 
+               style="text-align: center; background: #eee; border: none; font-weight: bold;">
+    </div>
+
+    <div class="grid">
+        <!-- 1. 连接模块 -->
+        <div class="card full-width">
+            <h3>1. 目标连接</h3>
+            <div style="display: flex; gap: 10px;">
+                <input type="text" id="targetUrl" value="https://www.bing.com" placeholder="目标网址">
+                <button onclick="sendAction('OPEN_AND_ATTACH', { url: getVal('targetUrl') })" style="width: 150px; margin-top: 0;">🚀 启动并连接</button>
+            </div>
+        </div>
+
+        <!-- 2. 鼠标点击 -->
+        <div class="card">
+            <h3>🖱️ 模拟点击</h3>
+            <div style="display: flex; gap: 5px;">
+                <input type="number" id="clickX" placeholder="X" value="500">
+                <input type="number" id="clickY" placeholder="Y" value="300">
+            </div>
+            <button onclick="sendAction('CLICK', { x: parseInt(getVal('clickX')), y: parseInt(getVal('clickY')) })">点击坐标</button>
+        </div>
+
+        <!-- 3. 页面滚动 -->
+        <div class="card">
+            <h3>📜 页面滚动</h3>
+            <div style="display: flex; gap: 5px;">
+                <button class="secondary" onclick="sendAction('SCROLL', { deltaY: -500 })">⬆️ 向上滚</button>
+                <button class="secondary" onclick="sendAction('SCROLL', { deltaY: 500 })">⬇️ 向下滚</button>
+            </div>
+        </div>
+
+        <!-- 4. 键盘输入 -->
+        <div class="card">
+            <h3>⌨️ 键盘输入</h3>
+            <input type="text" id="typeText" placeholder="要在输入框填写的文字">
+            <button onclick="sendAction('TYPE', { text: getVal('typeText') })">在焦点处输入</button>
+        </div>
+
+        <!-- 5. 截图 -->
+        <div class="card">
+            <h3>📷 视觉感知 (截图)</h3>
+            <button onclick="captureScreen()">获取当前视口截图</button>
+            <div id="screenshot-preview">此处显示截图</div>
+        </div>
+
+        <!-- 6. 上帝模式 (JS执行) -->
+        <div class="card full-width">
+            <h3>⚡ 上帝模式 (执行 JS)</h3>
+            <textarea id="jsCode" rows="2" placeholder="document.title">return document.title;</textarea>
+            <button class="secondary" onclick="runScript()">执行脚本并获取结果</button>
+        </div>
+
+        <!-- 日志 -->
+        <div class="card full-width">
+            <h3>系统日志</h3>
+            <div id="log" class="log-box"></div>
+        </div>
+    </div>
+
+    <script>
+        // 工具函数
+        const getVal = (id) => document.getElementById(id).value;
+        const log = (msg) => {
+            const el = document.getElementById('log');
+            el.innerHTML += `<div>> ${msg}</div>`;
+            el.scrollTop = el.scrollHeight;
+        };
+
+        // 核心发送函数
+        function sendAction(action, data = {}) {
+            const extId = getVal('extId');
+            if (!extId) {
+                log("❌ 错误: 未获取到 Extension ID，请确认插件已安装并刷新页面");
+                return;
+            }
+
+            const payload = { action, ...data };
+            log(`发送指令: ${action}`);
+
+            chrome.runtime.sendMessage(extId, payload, (response) => {
+                if (chrome.runtime.lastError) {
+                    log(`❌ 通信失败: ${chrome.runtime.lastError.message}`);
+                    return;
+                }
+                if (response.status === 'error') {
+                    log(`⚠️ 执行报错: ${response.message}`);
+                } else {
+                    log(`✅ 成功: ${JSON.stringify(response.data || 'OK')}`);
+                    // 如果是截图，特殊处理
+                    if (action === 'SCREENSHOT') showScreenshot(response.data);
+                }
+            });
+        }
+
+        // 截图专用
+        function captureScreen() {
+            sendAction('SCREENSHOT');
+        }
+        function showScreenshot(base64Data) {
+            const img = document.createElement('img');
+            img.src = "data:image/jpeg;base64," + base64Data;
+            const container = document.getElementById('screenshot-preview');
+            container.innerHTML = '';
+            container.appendChild(img);
+        }
+
+        // 脚本专用
+        function runScript() {
+            const code = getVal('jsCode');
+            sendAction('EXECUTE_SCRIPT', { script: code });
+        }
+    </script>
+</body>
+</html>

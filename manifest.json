@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "AI Agent Debugger Host (Pro)",
+  "version": "1.1.0",
+  "description": "全功能 CDP 控制中心",
+  "permissions": [
+    "debugger",
+    "tabs",
+    "scripting"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      // 注意：这里必须匹配你 Python http.server 的地址
+      "matches": ["http://127.0.0.1:*/*", "http://localhost:*/*", "file:///*"],
+      "js": ["injector.js"],
+      "run_at": "document_end"
+    }
+  ],
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:*/*", 
+      "http://127.0.0.1:*/*"
+    ]
+  }
+}
