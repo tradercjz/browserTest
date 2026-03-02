@@ -173,12 +173,19 @@
         };
 
         async function connectCurrentTab() {
-            // 获取当前所在窗口的活动标签页
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            // 获取用户最后聚焦的浏览器窗口中的活动标签页（避免把侧边栏本身当成窗口）
+            const [tab] = await chrome.tabs.query({active: true, lastFocusedWindow: true});
             if (!tab) {
-                log("❌ 获取当前标签页失败");
+                log("❌ 获取当前标签页失败: 未找到活动页");
                 return;
             }
+            
+            // 浏览器系统页面无法被接管
+            if (tab.url.startsWith('chrome://') || tab.url.startsWith('edge://')) {
+                log(`❌ 无法接管系统页面: ${tab.url}。请打开一个普通的网页 (如 github.com) 再重试。`);
+                return;
+            }
+            
             log(`正在接管: ${tab.title || tab.url}`);
 
             // 通知 background 挂载 Debugger 到这个 tab
