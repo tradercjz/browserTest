@@ -6,22 +6,35 @@
   "permissions": [
     "debugger",
     "tabs",
-    "scripting"
+    "scripting",
+    "sidePanel",
+    "activeTab"
   ],
+  "action": {
+    "default_title": "AI Agent 控制台"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      // 注意：这里必须匹配你 Python http.server 的地址
-      "matches": ["http://127.0.0.1:*/*", "http://localhost:*/*", "file:///*"],
-      "js": ["injector.js"],
+      "matches": [
+        "http://127.0.0.1:*/*",
+        "http://localhost:*/*",
+        "file:///*"
+      ],
+      "js": [
+        "injector.js"
+      ],
       "run_at": "document_end"
     }
   ],
   "externally_connectable": {
     "matches": [
-      "http://localhost:*/*", 
+      "http://localhost:*/*",
       "http://127.0.0.1:*/*"
     ]
   }

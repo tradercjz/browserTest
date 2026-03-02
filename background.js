@@ -2,18 +2,29 @@
 
 let currentTargetTabId = null;
 
+// 接收外部网页的消息 (如 controller.html)
 chrome.runtime.onMessageExternal.addListener((request, sender, sendResponse) => {
-  // 统一的错误处理包装
   handleRequest(request)
     .then(data => sendResponse({ status: "success", data }))
     .catch(err => sendResponse({ status: "error", message: err.message }));
+  return true;
+});
 
-  return true; // 保持消息通道开启
+// 接收内部 UI 的消息 (如 sidepanel.html)
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  handleRequest(request)
+    .then(data => sendResponse({ status: "success", data }))
+    .catch(err => sendResponse({ status: "error", message: err.message }));
+  return true;
 });
 
 async function handleRequest(request) {
   if (request.action === "OPEN_AND_ATTACH") {
     return await openAndAttach(request.url);
+  }
+
+  if (request.action === "ATTACH_CURRENT_TAB") {
+    return await attachCurrent(request.tabId);
   }
 
   // 检查是否已连接
@@ -52,6 +63,13 @@ async function openAndAttach(url) {
   await chrome.debugger.attach({ tabId: tab.id }, "1.3");
   await chrome.debugger.sendCommand({ tabId: tab.id }, "Page.enable");
   return tab.id;
+}
+
+async function attachCurrent(tabId) {
+  currentTargetTabId = tabId;
+  await chrome.debugger.attach({ tabId: tabId }, "1.3");
+  await chrome.debugger.sendCommand({ tabId: tabId }, "Page.enable");
+  return tabId;
 }
 
 async function performClick(target, x, y) {
@@ -150,6 +168,11 @@ function connectBackend() {
       reconnectTimer = setInterval(connectBackend, 3000);
     }
   };
+}
+
+// 允许点击插件图标时打开侧边栏
+if (chrome.sidePanel) {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error);
 }
 
 // 插件加载时立即发起连接

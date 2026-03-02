@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Agent 控制台</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            padding: 10px;
+            margin: 0;
+            background: #f0f2f5;
+            font-size: 14px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 15px;
+        }
+
+        h1 {
+            font-size: 18px;
+            margin: 0 0 5px 0;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 10px;
+        }
+
+        .card {
+            background: white;
+            padding: 10px;
+            border-radius: 6px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        h3 {
+            margin-top: 0;
+            color: #333;
+            font-size: 14px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
+            margin-bottom: 8px;
+        }
+
+        input,
+        textarea {
+            width: 100%;
+            padding: 6px;
+            box-sizing: border-box;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 5px;
+        }
+
+        button {
+            width: 100%;
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 8px;
+            cursor: pointer;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        button.secondary {
+            background: #6c757d;
+            margin-top: 5px;
+        }
+
+        #screenshot-preview {
+            width: 100%;
+            border: 1px dashed #ccc;
+            min-height: 80px;
+            margin-top: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #screenshot-preview img {
+            max-width: 100%;
+            border-radius: 4px;
+        }
+
+        .log-box {
+            background: #2d2d2d;
+            color: #00ff00;
+            padding: 8px;
+            height: 120px;
+            overflow-y: scroll;
+            font-family: monospace;
+            font-size: 11px;
+            border-radius: 4px;
+            word-break: break-all;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+            background: #ffeeba;
+            color: #856404;
+            margin-bottom: 10px;
+        }
+
+        .connected {
+            background: #d4edda;
+            color: #155724;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h1>🤖 Agent 侧边栏</h1>
+        <div id="statusBadge" class="status-badge">等待连接...</div>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <button onclick="connectCurrentTab()" style="background: #28a745;">🔗 接管当前所在网页</button>
+            <p style="font-size: 11px; color: #666; margin: 5px 0 0 0;">点击后，本页面将挂载 Debugger 从而支持 Agent 操作</p>
+        </div>
+
+        <div class="card">
+            <h3>🖱️ 模拟点击</h3>
+            <div style="display: flex; gap: 5px;">
+                <input type="number" id="clickX" placeholder="X" value="300">
+                <input type="number" id="clickY" placeholder="Y" value="300">
+            </div>
+            <button
+                onclick="sendAction('CLICK', { x: parseInt(getVal('clickX')), y: parseInt(getVal('clickY')) })">点击坐标</button>
+        </div>
+
+        <div class="card">
+            <h3>📜 页面滚动</h3>
+            <div style="display: flex; gap: 5px;">
+                <button class="secondary" onclick="sendAction('SCROLL', { deltaY: -500 })" style="margin-top:0">⬆️
+                    向上</button>
+                <button class="secondary" onclick="sendAction('SCROLL', { deltaY: 500 })" style="margin-top:0">⬇️
+                    向下</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>📷 视觉 (截图)</h3>
+            <button onclick="captureScreen()">获取并返回当前视口</button>
+            <div id="screenshot-preview">预览区域</div>
+        </div>
+
+        <div class="card">
+            <h3>系统日志</h3>
+            <div id="log" class="log-box"></div>
+        </div>
+    </div>
+
+    <script>
+        const getVal = (id) => document.getElementById(id).value;
+        const log = (msg) => {
+            const el = document.getElementById('log');
+            el.innerHTML += `<div>> ${msg}</div>`;
+            el.scrollTop = el.scrollHeight;
+        };
+
+        async function connectCurrentTab() {
+            // 获取当前所在窗口的活动标签页
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (!tab) {
+                log("❌ 获取当前标签页失败");
+                return;
+            }
+            log(`正在接管: ${tab.title || tab.url}`);
+
+            // 通知 background 挂载 Debugger 到这个 tab
+            chrome.runtime.sendMessage({ action: 'ATTACH_CURRENT_TAB', tabId: tab.id }, (response) => {
+                if (chrome.runtime.lastError) {
+                    log(`❌ 通信失败: ${chrome.runtime.lastError.message}`);
+                    return;
+                }
+                if (response.status === 'error') {
+                    // CDP 可能会报 Already attached 这种错
+                    log(`⚠️ 挂载反馈: ${response.message}`);
+                    if (response.message.includes('attach')) {
+                        updateStatus(true);
+                    }
+                } else {
+                    log(`✅ 成功接管当前标签页!`);
+                    updateStatus(true);
+                }
+            });
+        }
+
+        function updateStatus(isConnected) {
+            const badge = document.getElementById('statusBadge');
+            if (isConnected) {
+                badge.textContent = '✅ 已接管页面';
+                badge.classList.add('connected');
+            } else {
+                badge.textContent = '等待连接...';
+                badge.classList.remove('connected');
+            }
+        }
+
+        function sendAction(action, data = {}) {
+            const payload = { action, ...data };
+            log(`下发指令: ${action}`);
+
+            chrome.runtime.sendMessage(payload, (response) => {
+                if (chrome.runtime.lastError) {
+                    log(`❌ 通信失败: ${chrome.runtime.lastError.message}`);
+                    return;
+                }
+                if (!response) return;
+
+                if (response.status === 'error') {
+                    log(`⚠️ 报错: ${response.message}`);
+                } else {
+                    log(`✅ OK`);
+                    if (action === 'SCREENSHOT') showScreenshot(response.data);
+                }
+            });
+        }
+
+        function captureScreen() {
+            sendAction('SCREENSHOT');
+        }
+
+        function showScreenshot(base64Data) {
+            const img = document.createElement('img');
+            img.src = "data:image/jpeg;base64," + base64Data;
+            const container = document.getElementById('screenshot-preview');
+            container.innerHTML = '';
+            container.appendChild(img);
+        }
+    </script>
+</body>
+
+</html>
