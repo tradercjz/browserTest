@@ -26,6 +26,10 @@ async def handler(websocket):
                     data = response.get("data")
                     if action == "SCREENSHOT" and data:
                         print(f"[插件] ✅ 成功返回: [截图 Base64 数据, 长度 {len(data)}]")
+                        import base64
+                        with open("screenshot.jpg", "wb") as f:
+                            f.write(base64.b64decode(data))
+                        print("📸 截图已成功保存到当前目录下的 screenshot.jpg，快打开看看吧！")
                     else:
                         print(f"[插件] ✅ 成功返回: {data}")
                 else:
@@ -44,8 +48,8 @@ async def handler(websocket):
         await send_cmd("EXECUTE_SCRIPT", script="document.title")
         await asyncio.sleep(1)
         
-        # 3. 页面滚动一下
-        await send_cmd("SCROLL", deltaY=200)
+        # 3. 页面滚动一下 (加大滚轮距离能明显看到效果)
+        await send_cmd("SCROLL", deltaY=800)
         await asyncio.sleep(1)
         
         # 4. 获取一张截图

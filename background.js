@@ -82,7 +82,7 @@ async function performClick(target, x, y) {
 async function performScroll(target, deltaY) {
   await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
     type: "mouseWheel",
-    x: 0, y: 0,
+    x: 300, y: 300, // 将坐标放在视口中央偏上，防止 (0,0) 获取不到滚动目标
     deltaX: 0,
     deltaY: deltaY // 正值向下滚，负值向上滚
   });
