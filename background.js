@@ -7,7 +7,7 @@ chrome.runtime.onMessageExternal.addListener((request, sender, sendResponse) => 
   handleRequest(request)
     .then(data => sendResponse({ status: "success", data }))
     .catch(err => sendResponse({ status: "error", message: err.message }));
-    
+
   return true; // 保持消息通道开启
 });
 
@@ -26,19 +26,19 @@ async function handleRequest(request) {
   switch (request.action) {
     case "CLICK":
       return await performClick(target, request.x, request.y);
-      
+
     case "SCROLL":
       return await performScroll(target, request.deltaY);
-      
+
     case "TYPE":
       return await performType(target, request.text);
-      
+
     case "SCREENSHOT":
       return await performScreenshot(target);
-      
+
     case "EXECUTE_SCRIPT":
       return await performExecute(target, request.script);
-      
+
     default:
       throw new Error("未知指令: " + request.action);
   }
@@ -92,7 +92,7 @@ async function performExecute(target, script) {
     expression: script,
     returnByValue: true // 如果结果是对象，直接返回 JSON
   });
-  
+
   if (result.exceptionDetails) {
     throw new Error("JS 执行出错: " + result.exceptionDetails.text);
   }
@@ -103,3 +103,54 @@ async function performExecute(target, script) {
 chrome.debugger.onDetach.addListener((source) => {
   if (source.tabId === currentTargetTabId) currentTargetTabId = null;
 });
+
+// --- WebSocket 与后端 Agent 通信 ---
+let ws = null;
+let reconnectTimer = null;
+
+function connectBackend() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+
+  // 尝试连接本地 Python Agent 测试服务
+  ws = new WebSocket("ws://127.0.0.1:8765");
+
+  ws.onopen = () => {
+    console.log("✅ 已连接到 Agent 后端测试服务器");
+    if (reconnectTimer) {
+      clearInterval(reconnectTimer);
+      reconnectTimer = null;
+    }
+  };
+
+  ws.onmessage = async (event) => {
+    // 解析后端的指令
+    const req = JSON.parse(event.data);
+
+    try {
+      // 复用原本就写好的 handleRequest 大循环调度
+      const data = await handleRequest(req);
+      // 向后端返回成功的结果
+      ws.send(JSON.stringify({ id: req.id, status: "success", data: data }));
+    } catch (err) {
+      // 向后端报告错误
+      ws.send(JSON.stringify({ id: req.id, status: "error", message: err.message }));
+    }
+  };
+
+  ws.onerror = (err) => {
+    console.log("⚠️ WebSocket 出错，无法连接后端服务");
+  };
+
+  ws.onclose = () => {
+    console.log("❌ WebSocket 断开，自动重连中...");
+    ws = null;
+    if (!reconnectTimer) {
+      reconnectTimer = setInterval(connectBackend, 3000);
+    }
+  };
+}
+
+// 插件加载时立即发起连接
+connectBackend();
