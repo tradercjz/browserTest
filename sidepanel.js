@@ -32,12 +32,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     document.getElementById('btn-reset-conv').addEventListener('click', resetConversation);
 
-    // Listen for AI Edit Trigger from content script or background
-    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-        if (request.action === 'TRIGGER_AI_EDIT') {
-            triggerAiEdit(request.selected_code, request.instruction, request.full_code);
-        }
-    });
 
     // Initialize Conversation
     initConversation();
@@ -65,25 +59,6 @@ function resetConversation() {
     log(`🆕 已开启新会话: ${conversationId}`);
 }
 
-async function triggerAiEdit(code, instruction, fullCode = "") {
-    let prompt = `用户想要修改以下代码：\n\n[选中的片段]\n\`\`\`\n${code}\n\`\`\`\n`;
-
-    if (fullCode) {
-        prompt += `\n[编辑器完整上下文]\n\`\`\`\n${fullCode}\n\`\`\`\n`;
-    }
-
-    prompt += `\n修改需求：${instruction}\n\n请生成更新后的完整代码。注意：如果提供了完整上下文，请输出更新后的完整逻辑。最后请务必使用 \`browser_input_code\` 工具将其替换回编辑器中。`;
-
-    // UI Feedback: Show a special context block
-    const history = document.getElementById('chat-history');
-    const contextDiv = document.createElement('div');
-    contextDiv.className = 'chat-msg msg-user';
-    contextDiv.style.borderLeft = '4px solid #f39c12';
-    contextDiv.innerHTML = `<strong>✨ AI 代码修改请求</strong><br/>全量上下文: ${fullCode ? '✅ 已携带' : '❌ 未获取'}<br/>代码片段: <code style="background:#eee;padding:2px">${code.substring(0, 30)}...</code><br/>需求: ${instruction}`;
-    history.appendChild(contextDiv);
-
-    await sendMessage(prompt, true); // true indicates it's an automated/background prompt
-}
 
 async function sendMessage(overrideText = null, isSilent = false) {
     const inputEl = document.getElementById('chat-input');

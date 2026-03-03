@@ -30,20 +30,9 @@
         "<all_urls>"
       ],
       "js": [
-        "injector.js",
-        "selection_handler.js"
+        "injector.js"
       ],
       "run_at": "document_idle"
-    },
-    {
-      "matches": [
-        "<all_urls>"
-      ],
-      "js": [
-        "monaco_bridge.js"
-      ],
-      "world": "MAIN",
-      "run_at": "document_start"
     }
   ],
   "externally_connectable": {

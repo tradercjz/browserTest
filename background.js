@@ -139,9 +139,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 async function handleRequest(request) {
-  if (request.action === "TRIGGER_AI_EDIT") {
-    return "handled_by_sidepanel";
-  }
 
   if (request.action === "OPEN_AND_ATTACH") {
     const tab = await chrome.tabs.create({ url: request.url, active: true });
