@@ -23,7 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btn-screenshot').addEventListener('click', captureScreen);
 
     // Chat UI Listeners
-    document.getElementById('btn-send').addEventListener('click', sendMessage);
+    document.getElementById('btn-send').addEventListener('click', () => sendMessage());
     document.getElementById('chat-input').addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
@@ -108,6 +108,7 @@ async function sendMessage(overrideText = null, isSilent = false) {
         formData.append('question', text);
         formData.append('conversation_id', conversationId);
         formData.append('mode', 'ACT');
+        formData.append('injected_context', JSON.stringify({ source: 'web' }));
 
         const response = await fetch('http://localhost:8007/api/v1/agent/chat', {
             method: 'POST',
