@@ -1,8 +1,8 @@
 // overlay.js
 
 (function () {
-    const OVERLAY_ID = "infinisynapse-ai-overlay";
-    const BANNER_ID = "infinisynapse-ai-banner";
+    const OVERLAY_ID = "dolphinmind-ai-overlay";
+    const BANNER_ID = "dolphinmind-ai-banner";
 
     // Prevent multiple injections
     if (document.getElementById(OVERLAY_ID)) return;
@@ -16,12 +16,9 @@
         left: "0",
         width: "100vw",
         height: "100vh",
-        backgroundColor: "rgba(0, 150, 255, 0.15)", // Light blue transparent
-        pointerEvents: "none", // VERY IMPORTANT: Let clicks pass through
-        zIndex: "2147483646", // Just under max z-index
-        transition: "box-shadow 0.3s ease",
-        boxShadow: "inset 0 0 40px rgba(0, 150, 255, 0.5)",
-        border: "2px solid rgba(0, 150, 255, 0.8)",
+        backgroundColor: "rgba(0, 150, 255, 0.05)", // Extremely light blue
+        pointerEvents: "none", // Let clicks pass through
+        zIndex: "2147483646",
         boxSizing: "border-box"
     });
 
@@ -56,15 +53,15 @@
         height: "10px",
         backgroundColor: "#ff4d4f",
         borderRadius: "50%",
-        animation: "infinisynapse-pulse 1.5s infinite"
+        animation: "dolphinmind-pulse 1.5s infinite"
     });
 
     // Animation for the dot
-    if (!document.getElementById("infinisynapse-styles")) {
+    if (!document.getElementById("dolphinmind-styles")) {
         const style = document.createElement("style");
-        style.id = "infinisynapse-styles";
+        style.id = "dolphinmind-styles";
         style.textContent = `
-      @keyframes infinisynapse-pulse {
+      @keyframes dolphinmind-pulse {
         0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255, 77, 79, 0.7); }
         70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(255, 77, 79, 0); }
         100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255, 77, 79, 0); }

@@ -117,6 +117,83 @@
             background: #d4edda;
             color: #155724;
         }
+
+        /* Chat Styles */
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            height: 350px;
+            margin-top: 10px;
+        }
+
+        #chat-history {
+            flex-grow: 1;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 8px;
+            margin-bottom: 8px;
+            background: #fdfdfd;
+        }
+
+        .chat-msg {
+            margin-bottom: 10px;
+            padding: 8px;
+            border-radius: 6px;
+            font-size: 13px;
+            line-height: 1.5;
+            word-wrap: break-word;
+        }
+
+        .msg-user {
+            background: #e7f3ff;
+            align-self: flex-end;
+            margin-left: 20px;
+            border-bottom-right-radius: 0;
+        }
+
+        .msg-agent {
+            background: #f0f0f0;
+            align-self: flex-start;
+            margin-right: 20px;
+            border-bottom-left-radius: 0;
+        }
+
+        .msg-thought {
+            font-style: italic;
+            color: #666;
+            font-size: 11px;
+            border-left: 3px solid #007bff;
+            padding-left: 8px;
+            margin-bottom: 5px;
+        }
+
+        .msg-action {
+            background: #fff3cd;
+            color: #856404;
+            font-family: monospace;
+            font-size: 11px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            margin-bottom: 5px;
+        }
+
+        .chat-input-area {
+            display: flex;
+            gap: 5px;
+        }
+
+        #chat-input {
+            flex-grow: 1;
+            height: 40px;
+            resize: none;
+            margin-bottom: 0;
+        }
+
+        #btn-send {
+            width: 60px;
+            height: 40px;
+        }
     </style>
 </head>
 
@@ -128,8 +205,18 @@
 
     <div class="grid">
         <div class="card">
-            <button id="btn-attach" style="background: #28a745;">🔗 接管当前所在网页</button>
-            <p style="font-size: 11px; color: #666; margin: 5px 0 0 0;">点击后，本页面将挂载 Debugger 从而支持 Agent 操作</p>
+            <div style="display: flex; gap: 5px;">
+                <button id="btn-attach" style="background: #28a745;">🔗 接管此页</button>
+                <button id="btn-takeover" style="background: #dc3545;">✋ 结束接管</button>
+            </div>
+            <p style="font-size: 11px; color: #666; margin: 5px 0 0 0;">接管后 Agent 可操作此页；“结束接管”将释放控制器并清除页面遮罩。</p>
+        </div>
+
+        <div class="card">
+            <h3>📂 受控页签列表</h3>
+            <div id="tab-list" style="max-height: 150px; overflow-y: auto; font-size: 12px;">
+                <p style="color: #999; text-align: center;">暂无受控页签</p>
+            </div>
         </div>
 
         <div class="card">
@@ -155,6 +242,25 @@
             <h3>📷 视觉 (截图)</h3>
             <button id="btn-screenshot">获取并返回当前视口</button>
             <div id="screenshot-preview">预览区域</div>
+            <div id="extracted-text"
+                style="margin-top: 10px; color: #333; font-size: 13px; text-align: left; padding: 8px; border: 1px solid #eee; border-radius: 4px; display: none; word-wrap: break-word;">
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>🤖 Agent 对话</h3>
+            <div id="status-info" style="font-size: 11px; color: #666; margin-bottom: 5px;">会话ID: <span
+                    id="conv-id">无</span></div>
+            <div class="chat-container">
+                <div id="chat-history">
+                    <p style="color: #999; text-align: center; margin-top: 50px;">输入指令，让 Agent 开始工作吧...</p>
+                </div>
+                <div class="chat-input-area">
+                    <textarea id="chat-input" placeholder="请输入指令..."></textarea>
+                    <button id="btn-send">发送</button>
+                </div>
+            </div>
+            <button id="btn-reset-conv" class="secondary" style="font-size: 11px; padding: 4px;">开启新会话</button>
         </div>
 
         <div class="card">

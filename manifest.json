@@ -1,20 +1,22 @@
 {
   "manifest_version": 3,
-  "name": "AI Agent Debugger Host (Pro)",
-  "version": "1.1.0",
-  "description": "全功能 CDP 控制中心",
+  "name": "DolphinMind Browser Assistant",
+  "version": "1.2.0",
+  "description": "DolphinMind 智能浏览器助手",
   "permissions": [
     "debugger",
     "tabs",
+    "tabGroups",
     "scripting",
     "sidePanel",
+    "alarms",
     "activeTab"
   ],
   "host_permissions": [
     "<all_urls>"
   ],
   "action": {
-    "default_title": "AI Agent 控制台"
+    "default_title": "DolphinMind 控制台"
   },
   "side_panel": {
     "default_path": "sidepanel.html"
@@ -25,14 +27,23 @@
   "content_scripts": [
     {
       "matches": [
-        "http://127.0.0.1:*/*",
-        "http://localhost:*/*",
-        "file:///*"
+        "<all_urls>"
       ],
       "js": [
-        "injector.js"
+        "injector.js",
+        "selection_handler.js"
       ],
-      "run_at": "document_end"
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "monaco_bridge.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start"
     }
   ],
   "externally_connectable": {
