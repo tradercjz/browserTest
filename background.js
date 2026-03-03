@@ -27,6 +27,14 @@ async function handleRequest(request) {
     return await attachCurrent(request.tabId);
   }
 
+  if (request.action === "TAKE_OVER") {
+    if (currentTargetTabId) {
+      await chrome.debugger.detach({ tabId: currentTargetTabId });
+      currentTargetTabId = null;
+    }
+    return "detached";
+  }
+
   // 检查是否已连接
   if (!currentTargetTabId) {
     throw new Error("请先连接目标网页 (执行 Step 1)");
@@ -62,6 +70,13 @@ async function openAndAttach(url) {
   currentTargetTabId = tab.id;
   await chrome.debugger.attach({ tabId: tab.id }, "1.3");
   await chrome.debugger.sendCommand({ tabId: tab.id }, "Page.enable");
+
+  // Inject the overlay
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    files: ["overlay.js"]
+  }).catch(err => console.error("Failed to inject overlay:", err));
+
   return tab.id;
 }
 
@@ -69,6 +84,13 @@ async function attachCurrent(tabId) {
   currentTargetTabId = tabId;
   await chrome.debugger.attach({ tabId: tabId }, "1.3");
   await chrome.debugger.sendCommand({ tabId: tabId }, "Page.enable");
+
+  // Inject the overlay
+  await chrome.scripting.executeScript({
+    target: { tabId: tabId },
+    files: ["overlay.js"]
+  }).catch(err => console.error("Failed to inject overlay:", err));
+
   return tabId;
 }
 
@@ -119,7 +141,20 @@ async function performExecute(target, script) {
 
 // 监听断开
 chrome.debugger.onDetach.addListener((source) => {
-  if (source.tabId === currentTargetTabId) currentTargetTabId = null;
+  if (source.tabId === currentTargetTabId) {
+    // Remove the overlay from the DOM
+    chrome.scripting.executeScript({
+      target: { tabId: currentTargetTabId },
+      func: () => {
+        const overlay = document.getElementById("infinisynapse-ai-overlay");
+        const banner = document.getElementById("infinisynapse-ai-banner");
+        if (overlay) overlay.remove();
+        if (banner) banner.remove();
+      }
+    }).catch(err => console.error("Failed to remove overlay:", err));
+
+    currentTargetTabId = null;
+  }
 });
 
 // --- WebSocket 与后端 Agent 通信 ---

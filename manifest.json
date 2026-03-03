@@ -10,6 +10,9 @@
     "sidePanel",
     "activeTab"
   ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "action": {
     "default_title": "AI Agent 控制台"
   },
