@@ -346,13 +346,27 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
-function connectBackend() {
+async function getClientId() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['clientId'], (result) => {
+      if (result.clientId) {
+        resolve(result.clientId);
+      } else {
+        const newId = crypto.randomUUID();
+        chrome.storage.local.set({ clientId: newId }, () => resolve(newId));
+      }
+    });
+  });
+}
+
+async function connectBackend() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
     return;
   }
 
-  // 尝试连接本地 Python Agent 测试服务
-  ws = new WebSocket("ws://127.0.0.1:8765");
+  const clientId = await getClientId();
+  // 尝试连接本地 Python Agent 测试服务，带上clientId区分前端实例
+  ws = new WebSocket(`ws://127.0.0.1:8765/?clientId=${clientId}`);
 
   ws.onopen = () => {
     console.log("✅ 已连接到 Agent 后端服务器");

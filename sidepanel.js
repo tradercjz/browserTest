@@ -83,7 +83,12 @@ async function sendMessage(overrideText = null, isSilent = false) {
         formData.append('question', text);
         formData.append('conversation_id', conversationId);
         formData.append('mode', 'ACT');
-        formData.append('injected_context', JSON.stringify({ source: 'web' }));
+
+        // Retrieve clientId to identify this browser profile to the backend
+        const storageResult = await new Promise(resolve => chrome.storage.local.get(['clientId'], resolve));
+        const clientId = storageResult.clientId;
+
+        formData.append('injected_context', JSON.stringify({ source: 'web', clientId: clientId }));
 
         const response = await fetch('http://localhost:8007/api/v1/agent/chat', {
             method: 'POST',
