@@ -75,20 +75,7 @@
             margin-top: 5px;
         }
 
-        #screenshot-preview {
-            width: 100%;
-            border: 1px dashed #ccc;
-            min-height: 80px;
-            margin-top: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
 
-        #screenshot-preview img {
-            max-width: 100%;
-            border-radius: 4px;
-        }
 
         .log-box {
             background: #2d2d2d;
@@ -219,33 +206,7 @@
             </div>
         </div>
 
-        <div class="card">
-            <h3>🖱️ 模拟点击</h3>
-            <div style="display: flex; gap: 5px;">
-                <input type="number" id="clickX" placeholder="X" value="300">
-                <input type="number" id="clickY" placeholder="Y" value="300">
-            </div>
-            <button id="btn-click">点击坐标</button>
-        </div>
 
-        <div class="card">
-            <h3>📜 页面滚动</h3>
-            <div style="display: flex; gap: 5px;">
-                <button id="btn-scroll-up" class="secondary" style="margin-top:0">⬆️
-                    向上</button>
-                <button id="btn-scroll-down" class="secondary" style="margin-top:0">⬇️
-                    向下</button>
-            </div>
-        </div>
-
-        <div class="card">
-            <h3>📷 视觉 (截图)</h3>
-            <button id="btn-screenshot">获取并返回当前视口</button>
-            <div id="screenshot-preview">预览区域</div>
-            <div id="extracted-text"
-                style="margin-top: 10px; color: #333; font-size: 13px; text-align: left; padding: 8px; border: 1px solid #eee; border-radius: 4px; display: none; word-wrap: break-word;">
-            </div>
-        </div>
 
         <div class="card">
             <h3>🤖 Agent 对话</h3>
@@ -258,6 +219,7 @@
                 <div class="chat-input-area">
                     <textarea id="chat-input" placeholder="请输入指令..."></textarea>
                     <button id="btn-send">发送</button>
+                    <button id="btn-stop" style="display: none; background: #dc3545;">停止</button>
                 </div>
             </div>
             <button id="btn-reset-conv" class="secondary" style="font-size: 11px; padding: 4px;">开启新会话</button>

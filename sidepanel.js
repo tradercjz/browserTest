@@ -11,19 +11,16 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btn-takeover').addEventListener('click', () => {
         sendAction('TAKE_OVER');
     });
-    document.getElementById('btn-click').addEventListener('click', () => {
-        sendAction('CLICK', { x: parseInt(getVal('clickX')), y: parseInt(getVal('clickY')) });
-    });
-    document.getElementById('btn-scroll-up').addEventListener('click', () => {
-        sendAction('SCROLL', { deltaY: -500 });
-    });
-    document.getElementById('btn-scroll-down').addEventListener('click', () => {
-        sendAction('SCROLL', { deltaY: 500 });
-    });
-    document.getElementById('btn-screenshot').addEventListener('click', captureScreen);
+
 
     // Chat UI Listeners
     document.getElementById('btn-send').addEventListener('click', () => sendMessage());
+    document.getElementById('btn-stop').addEventListener('click', () => {
+        if (currentAbortController) {
+            currentAbortController.abort();
+        }
+    });
+
     document.getElementById('chat-input').addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
@@ -40,6 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // --- Chat state ---
 let conversationId = null;
 let isThinking = false;
+let currentAbortController = null;
 
 function initConversation() {
     conversationId = localStorage.getItem('agent_conversation_id');
@@ -68,7 +66,9 @@ async function sendMessage(overrideText = null, isSilent = false) {
     // 1. UI Feedback
     if (!overrideText) inputEl.value = '';
     isThinking = true;
-    document.getElementById('btn-send').disabled = true;
+    currentAbortController = new AbortController();
+    document.getElementById('btn-send').style.display = 'none';
+    document.getElementById('btn-stop').style.display = 'block';
 
     if (!isSilent) {
         appendChatMessage('user', text);
@@ -92,7 +92,8 @@ async function sendMessage(overrideText = null, isSilent = false) {
 
         const response = await fetch('http://localhost:8007/api/v1/agent/chat', {
             method: 'POST',
-            body: formData
+            body: formData,
+            signal: currentAbortController.signal
         });
 
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -126,11 +127,18 @@ async function sendMessage(overrideText = null, isSilent = false) {
             }
         }
     } catch (err) {
-        log(`❌ Chat 异常: ${err.message}`);
-        agentMsgEl.innerHTML += `<div style="color: red;">⚠️ 错误: ${err.message}</div>`;
+        if (err.name === 'AbortError') {
+            log(`⏹️ Chat 已手动停止`);
+            agentMsgEl.innerHTML += `<div style="color: #856404; font-style: italic; margin-top: 5px;">[对话已暂停，您可以继续输入指令]</div>`;
+        } else {
+            log(`❌ Chat 异常: ${err.message}`);
+            agentMsgEl.innerHTML += `<div style="color: red;">⚠️ 错误: ${err.message}</div>`;
+        }
     } finally {
         isThinking = false;
-        document.getElementById('btn-send').disabled = false;
+        currentAbortController = null;
+        document.getElementById('btn-send').style.display = 'block';
+        document.getElementById('btn-stop').style.display = 'none';
     }
 }
 
@@ -326,45 +334,8 @@ function sendAction(action, data = {}) {
             log(`⚠️ 报错: ${response.message}`);
         } else {
             log(`✅ OK`);
-            if (action === 'SCREENSHOT') showScreenshot(response.data);
         }
     });
 }
 
-function captureScreen() {
-    sendAction('SCREENSHOT');
-}
 
-function showScreenshot(base64Data) {
-    const img = document.createElement('img');
-    img.src = "data:image/jpeg;base64," + base64Data;
-    const container = document.getElementById('screenshot-preview');
-    container.innerHTML = '';
-    container.appendChild(img);
-
-    const textContainer = document.getElementById('extracted-text');
-    if (textContainer) {
-        textContainer.style.display = 'block';
-        textContainer.innerHTML = '正在使用大模型提取文字...';
-
-        fetch('http://localhost:8007/api/v1/agent/extract_text', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ image_base64: base64Data })
-        })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    textContainer.innerHTML = '<strong>📝 提取文字结果:</strong><br/><br/>' + data.extracted_text.replace(/\n/g, '<br/>');
-                } else {
-                    textContainer.innerHTML = '<span style="color:red">❌ 提取失败: ' + (data.detail || JSON.stringify(data)) + '</span>';
-                }
-            })
-            .catch(err => {
-                console.error('OCR fetch error:', err);
-                textContainer.innerHTML = '<span style="color:red">⚠️ 请求后端提取接口时发生网络异常: ' + err.message + '</span>';
-            });
-    }
-}
