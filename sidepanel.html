@@ -105,6 +105,39 @@
             color: #155724;
         }
 
+        /* Tab bar */
+        .tab-bar {
+            display: flex;
+            gap: 0;
+            margin-bottom: 10px;
+            border-bottom: 2px solid #dee2e6;
+        }
+
+        .tab-btn {
+            width: auto;
+            background: none;
+            color: #6c757d;
+            border: none;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            padding: 6px 16px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            border-radius: 0;
+        }
+
+        .tab-btn:hover {
+            background: #f8f9fa;
+            color: #333;
+        }
+
+        .tab-btn.active {
+            color: #007bff;
+            border-bottom-color: #007bff;
+            background: none;
+        }
+
         /* Chat Styles */
         .chat-container {
             display: flex;
@@ -168,6 +201,7 @@
         .chat-input-area {
             display: flex;
             gap: 5px;
+            align-items: center;
         }
 
         #chat-input {
@@ -180,6 +214,162 @@
         #btn-send {
             width: 60px;
             height: 40px;
+            flex-shrink: 0;
+        }
+
+        #btn-stop {
+            width: 60px;
+            height: 40px;
+            flex-shrink: 0;
+        }
+
+        .bg-toggle-label {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 11px;
+            color: #555;
+            white-space: nowrap;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        .bg-toggle-label input[type="checkbox"] {
+            width: auto;
+            margin: 0;
+            padding: 0;
+            cursor: pointer;
+        }
+
+        /* Tasks panel */
+        #tasks-panel {
+            display: none;
+        }
+
+        .task-list-area {
+            margin-bottom: 10px;
+        }
+
+        .task-card {
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            padding: 8px 10px;
+            margin-bottom: 6px;
+            background: #fafafa;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .task-card:hover {
+            background: #eef4ff;
+        }
+
+        .task-card.selected {
+            border-color: #007bff;
+            background: #eef4ff;
+        }
+
+        .task-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 4px;
+        }
+
+        .task-type {
+            font-size: 12px;
+            font-weight: 600;
+            color: #333;
+            word-break: break-all;
+        }
+
+        .task-time {
+            font-size: 10px;
+            color: #888;
+            white-space: nowrap;
+            margin-left: 8px;
+        }
+
+        /* Task status badges */
+        .task-badge {
+            display: inline-block;
+            padding: 2px 7px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: bold;
+        }
+
+        .badge-running    { background: #cfe2ff; color: #084298; }
+        .badge-completed  { background: #d1e7dd; color: #0a3622; }
+        .badge-failed     { background: #f8d7da; color: #842029; }
+        .badge-waiting_input { background: #fff3cd; color: #664d03; }
+        .badge-cancelled  { background: #e2e3e5; color: #41464b; }
+        .badge-pending    { background: #e2e3e5; color: #41464b; }
+
+        /* Task detail */
+        .task-detail-area {
+            border-top: 1px solid #eee;
+            padding-top: 10px;
+        }
+
+        #task-detail-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 6px;
+        }
+
+        #task-event-stream {
+            height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 8px;
+            background: #fdfdfd;
+            margin-bottom: 8px;
+            font-size: 12px;
+        }
+
+        .task-interact-area {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 5px;
+        }
+
+        #task-interact-input {
+            flex-grow: 1;
+            height: 34px;
+            resize: none;
+            margin-bottom: 0;
+            font-size: 12px;
+        }
+
+        #btn-task-interact {
+            width: 50px;
+            height: 34px;
+            font-size: 12px;
+            flex-shrink: 0;
+        }
+
+        #btn-task-cancel {
+            background: #dc3545;
+            font-size: 12px;
+            padding: 5px;
+        }
+
+        #btn-task-cancel:hover {
+            background: #b02a37;
+        }
+
+        #btn-refresh-tasks {
+            width: auto;
+            background: #6c757d;
+            font-size: 11px;
+            padding: 4px 10px;
+        }
+
+        #btn-refresh-tasks:hover {
+            background: #5a6268;
         }
     </style>
 </head>
@@ -196,7 +386,7 @@
                 <button id="btn-attach" style="background: #28a745;">🔗 接管此页</button>
                 <button id="btn-takeover" style="background: #dc3545;">✋ 结束接管</button>
             </div>
-            <p style="font-size: 11px; color: #666; margin: 5px 0 0 0;">接管后 Agent 可操作此页；“结束接管”将释放控制器并清除页面遮罩。</p>
+            <p style="font-size: 11px; color: #666; margin: 5px 0 0 0;">接管后 Agent 可操作此页；"结束接管"将释放控制器并清除页面遮罩。</p>
         </div>
 
         <div class="card">
@@ -209,20 +399,55 @@
 
 
         <div class="card">
-            <h3>🤖 Agent 对话</h3>
-            <div id="status-info" style="font-size: 11px; color: #666; margin-bottom: 5px;">会话ID: <span
-                    id="conv-id">无</span></div>
-            <div class="chat-container">
-                <div id="chat-history">
-                    <p style="color: #999; text-align: center; margin-top: 50px;">输入指令，让 Agent 开始工作吧...</p>
+            <!-- Tab bar -->
+            <div class="tab-bar">
+                <button class="tab-btn active" id="tab-chat-btn">🤖 Agent 对话</button>
+                <button class="tab-btn" id="tab-tasks-btn">📋 后台任务</button>
+            </div>
+
+            <!-- Chat panel -->
+            <div id="chat-panel">
+                <div id="status-info" style="font-size: 11px; color: #666; margin-bottom: 5px;">会话ID: <span
+                        id="conv-id">无</span></div>
+                <div class="chat-container">
+                    <div id="chat-history">
+                        <p style="color: #999; text-align: center; margin-top: 50px;">输入指令，让 Agent 开始工作吧...</p>
+                    </div>
+                    <div class="chat-input-area">
+                        <textarea id="chat-input" placeholder="请输入指令..."></textarea>
+                        <label class="bg-toggle-label" title="在后台运行任务">
+                            <input type="checkbox" id="bgToggle"> 后台
+                        </label>
+                        <button id="btn-send">发送</button>
+                        <button id="btn-stop" style="display: none; background: #dc3545;">停止</button>
+                    </div>
                 </div>
-                <div class="chat-input-area">
-                    <textarea id="chat-input" placeholder="请输入指令..."></textarea>
-                    <button id="btn-send">发送</button>
-                    <button id="btn-stop" style="display: none; background: #dc3545;">停止</button>
+                <button id="btn-reset-conv" class="secondary" style="font-size: 11px; padding: 4px;">开启新会话</button>
+            </div>
+
+            <!-- Tasks panel -->
+            <div id="tasks-panel">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <span style="font-size: 12px; color: #555;">后台任务列表</span>
+                    <button id="btn-refresh-tasks">刷新</button>
+                </div>
+                <div class="task-list-area">
+                    <div id="task-list">
+                        <p style="color: #999; text-align: center; font-size: 12px;">暂无后台任务</p>
+                    </div>
+                </div>
+                <div class="task-detail-area" id="task-detail-area" style="display: none;">
+                    <div id="task-detail-title">任务详情</div>
+                    <div id="task-event-stream">
+                        <p style="color: #999; text-align: center; margin-top: 60px; font-size: 12px;">选择任务查看事件流...</p>
+                    </div>
+                    <div class="task-interact-area">
+                        <textarea id="task-interact-input" placeholder="发送指令给任务..."></textarea>
+                        <button id="btn-task-interact">发送</button>
+                    </div>
+                    <button id="btn-task-cancel">取消任务</button>
                 </div>
             </div>
-            <button id="btn-reset-conv" class="secondary" style="font-size: 11px; padding: 4px;">开启新会话</button>
         </div>
 
         <div class="card">

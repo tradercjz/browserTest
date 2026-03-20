@@ -1,3 +1,5 @@
+const API_URL = 'http://localhost:8007';
+
 const getVal = (id) => document.getElementById(id).value;
 const log = (msg) => {
     const el = document.getElementById('log');
@@ -11,7 +13,6 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btn-takeover').addEventListener('click', () => {
         sendAction('TAKE_OVER');
     });
-
 
     // Chat UI Listeners
     document.getElementById('btn-send').addEventListener('click', () => sendMessage());
@@ -29,6 +30,32 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     document.getElementById('btn-reset-conv').addEventListener('click', resetConversation);
 
+    // Tab switching
+    document.getElementById('tab-chat-btn').addEventListener('click', () => switchTab('chat'));
+    document.getElementById('tab-tasks-btn').addEventListener('click', () => switchTab('tasks'));
+
+    // Tasks panel listeners
+    document.getElementById('btn-refresh-tasks').addEventListener('click', loadTasks);
+    document.getElementById('btn-task-interact').addEventListener('click', () => {
+        const msg = document.getElementById('task-interact-input').value.trim();
+        if (msg && currentTaskId) {
+            interactTask(currentTaskId, msg);
+            document.getElementById('task-interact-input').value = '';
+        }
+    });
+    document.getElementById('task-interact-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            const msg = document.getElementById('task-interact-input').value.trim();
+            if (msg && currentTaskId) {
+                interactTask(currentTaskId, msg);
+                document.getElementById('task-interact-input').value = '';
+            }
+        }
+    });
+    document.getElementById('btn-task-cancel').addEventListener('click', () => {
+        if (currentTaskId) cancelTask(currentTaskId);
+    });
 
     // Initialize Conversation
     initConversation();
@@ -38,6 +65,10 @@ document.addEventListener('DOMContentLoaded', () => {
 let conversationId = null;
 let isThinking = false;
 let currentAbortController = null;
+
+// --- Tasks state ---
+let currentTaskId = null;
+let taskEventAbortController = null;
 
 function initConversation() {
     conversationId = localStorage.getItem('agent_conversation_id');
@@ -57,11 +88,213 @@ function resetConversation() {
     log(`🆕 已开启新会话: ${conversationId}`);
 }
 
+// --- Tab switching ---
+function switchTab(tab) {
+    const chatPanel = document.getElementById('chat-panel');
+    const tasksPanel = document.getElementById('tasks-panel');
+    const chatBtn = document.getElementById('tab-chat-btn');
+    const tasksBtn = document.getElementById('tab-tasks-btn');
+
+    if (tab === 'chat') {
+        chatPanel.style.display = 'block';
+        tasksPanel.style.display = 'none';
+        chatBtn.classList.add('active');
+        tasksBtn.classList.remove('active');
+    } else {
+        chatPanel.style.display = 'none';
+        tasksPanel.style.display = 'block';
+        chatBtn.classList.remove('active');
+        tasksBtn.classList.add('active');
+        loadTasks();
+    }
+}
+
+// --- Tasks functions ---
+
+async function loadTasks() {
+    const listEl = document.getElementById('task-list');
+    listEl.innerHTML = '<p style="color: #999; text-align: center; font-size: 12px;">加载中...</p>';
+
+    try {
+        const response = await fetch(`${API_URL}/api/v1/tasks`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+
+        // data may be an array or { tasks: [...] }
+        const tasks = Array.isArray(data) ? data : (data.tasks || []);
+
+        if (tasks.length === 0) {
+            listEl.innerHTML = '<p style="color: #999; text-align: center; font-size: 12px;">暂无后台任务</p>';
+            return;
+        }
+
+        listEl.innerHTML = '';
+        tasks.forEach(task => {
+            const card = createTaskCard(task);
+            listEl.appendChild(card);
+        });
+    } catch (err) {
+        listEl.innerHTML = `<p style="color: red; font-size: 12px;">加载失败: ${err.message}</p>`;
+        log(`❌ 加载任务列表失败: ${err.message}`);
+    }
+}
+
+function createTaskCard(task) {
+    const card = document.createElement('div');
+    card.className = 'task-card';
+    if (task.id === currentTaskId) card.classList.add('selected');
+
+    const status = (task.status || 'pending').toLowerCase();
+    const badgeClass = `badge-${status}`;
+    const statusText = task.status || 'PENDING';
+
+    const created = task.created_at ? new Date(task.created_at).toLocaleTimeString() : '';
+    const typeLabel = task.task_type || task.type || task.id || '任务';
+
+    card.innerHTML = `
+        <div class="task-card-header">
+            <span class="task-type">${typeLabel}</span>
+            <span class="task-time">${created}</span>
+        </div>
+        <span class="task-badge ${badgeClass}">${statusText}</span>
+    `;
+
+    card.addEventListener('click', () => viewTask(task.id));
+    return card;
+}
+
+function getTaskStatusBadgeClass(status) {
+    const s = (status || '').toLowerCase();
+    const map = {
+        running: 'badge-running',
+        completed: 'badge-completed',
+        failed: 'badge-failed',
+        waiting_input: 'badge-waiting_input',
+        cancelled: 'badge-cancelled',
+        canceled: 'badge-cancelled',
+        pending: 'badge-pending',
+    };
+    return map[s] || 'badge-pending';
+}
+
+async function viewTask(taskId) {
+    // Abort previous event stream if any
+    if (taskEventAbortController) {
+        taskEventAbortController.abort();
+        taskEventAbortController = null;
+    }
+
+    currentTaskId = taskId;
+
+    // Highlight selected card
+    document.querySelectorAll('.task-card').forEach(c => {
+        c.classList.toggle('selected', c.querySelector('.task-type') && c.dataset.taskId === taskId);
+    });
+
+    // Show detail area
+    const detailArea = document.getElementById('task-detail-area');
+    detailArea.style.display = 'block';
+
+    document.getElementById('task-detail-title').textContent = `任务: ${taskId.substring(0, 16)}...`;
+
+    const streamEl = document.getElementById('task-event-stream');
+    streamEl.innerHTML = '';
+
+    log(`📡 订阅任务事件: ${taskId}`);
+
+    // Subscribe to SSE via fetch (to support potential auth headers in the future)
+    taskEventAbortController = new AbortController();
+
+    try {
+        const response = await fetch(`${API_URL}/api/v1/tasks/${taskId}/events`, {
+            signal: taskEventAbortController.signal
+        });
+
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        // Create a container for the streaming events (reuse handleStreamPayload pattern)
+        const agentMsgEl = document.createElement('div');
+        agentMsgEl.className = 'chat-msg msg-agent';
+        streamEl.appendChild(agentMsgEl);
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const dataStr = line.substring(6).trim();
+                    if (dataStr === '[DONE]') {
+                        log(`✅ 任务事件流结束: ${taskId}`);
+                        continue;
+                    }
+
+                    try {
+                        const payload = JSON.parse(dataStr);
+                        handleStreamPayload(agentMsgEl, payload);
+                        streamEl.scrollTop = streamEl.scrollHeight;
+                    } catch (e) {
+                        console.error('Task event JSON parse error:', e, dataStr);
+                    }
+                }
+            }
+        }
+    } catch (err) {
+        if (err.name !== 'AbortError') {
+            log(`❌ 任务事件流异常: ${err.message}`);
+            const errEl = document.createElement('div');
+            errEl.style = 'color: red; font-size: 12px;';
+            errEl.textContent = `事件流错误: ${err.message}`;
+            streamEl.appendChild(errEl);
+        }
+    }
+}
+
+async function cancelTask(taskId) {
+    if (!confirm(`确定要取消任务 ${taskId.substring(0, 12)}... 吗？`)) return;
+
+    try {
+        const response = await fetch(`${API_URL}/api/v1/tasks/${taskId}/cancel`, {
+            method: 'POST'
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        log(`✅ 任务已取消: ${taskId}`);
+        loadTasks();
+    } catch (err) {
+        log(`❌ 取消任务失败: ${err.message}`);
+    }
+}
+
+async function interactTask(taskId, message) {
+    try {
+        const response = await fetch(`${API_URL}/api/v1/tasks/${taskId}/interact`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message })
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        log(`📨 指令已发送至任务: ${taskId}`);
+    } catch (err) {
+        log(`❌ 发送指令失败: ${err.message}`);
+    }
+}
+
+// --- Chat ---
 
 async function sendMessage(overrideText = null, isSilent = false) {
     const inputEl = document.getElementById('chat-input');
     const text = overrideText || inputEl.value.trim();
     if (!text || isThinking) return;
+
+    const isBackground = document.getElementById('bgToggle').checked;
 
     // 1. UI Feedback
     if (!overrideText) inputEl.value = '';
@@ -74,7 +307,59 @@ async function sendMessage(overrideText = null, isSilent = false) {
         appendChatMessage('user', text);
     }
 
-    // 2. Prepare for Agent Stream
+    if (isBackground) {
+        // Background mode: POST and get task_id back, then switch to Tasks tab
+        try {
+            const formData = new FormData();
+            formData.append('question', text);
+            formData.append('conversation_id', conversationId);
+            formData.append('mode', 'ACT');
+            formData.append('background', 'true');
+
+            const storageResult = await new Promise(resolve => chrome.storage.local.get(['clientId'], resolve));
+            const clientId = storageResult.clientId;
+            formData.append('injected_context', JSON.stringify({ source: 'web', clientId: clientId }));
+
+            const response = await fetch(`${API_URL}/api/v1/agent/chat`, {
+                method: 'POST',
+                body: formData,
+                signal: currentAbortController.signal
+            });
+
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+            const data = await response.json();
+            const taskId = data.task_id;
+
+            if (taskId) {
+                log(`🚀 后台任务已创建: ${taskId}`);
+                appendChatMessage('agent', `后台任务已创建，任务ID: ${taskId.substring(0, 16)}...`);
+                // Switch to Tasks tab and open the new task
+                switchTab('tasks');
+                await loadTasks();
+                viewTask(taskId);
+            } else {
+                log(`⚠️ 后台任务响应无 task_id`);
+                appendChatMessage('agent', `后台任务已提交，请在"后台任务"面板查看进度。`);
+                switchTab('tasks');
+                loadTasks();
+            }
+        } catch (err) {
+            if (err.name === 'AbortError') {
+                log(`⏹️ 后台任务提交已取消`);
+            } else {
+                log(`❌ 后台任务提交失败: ${err.message}`);
+            }
+        } finally {
+            isThinking = false;
+            currentAbortController = null;
+            document.getElementById('btn-send').style.display = 'block';
+            document.getElementById('btn-stop').style.display = 'none';
+        }
+        return;
+    }
+
+    // 2. Prepare for Agent Stream (normal mode)
     const agentMsgEl = appendChatMessage('agent', '...');
     const chatHistoryEl = document.getElementById('chat-history');
 
@@ -90,7 +375,7 @@ async function sendMessage(overrideText = null, isSilent = false) {
 
         formData.append('injected_context', JSON.stringify({ source: 'web', clientId: clientId }));
 
-        const response = await fetch('http://localhost:8007/api/v1/agent/chat', {
+        const response = await fetch(`${API_URL}/api/v1/agent/chat`, {
             method: 'POST',
             body: formData,
             signal: currentAbortController.signal
@@ -337,5 +622,3 @@ function sendAction(action, data = {}) {
         }
     });
 }
-
-
