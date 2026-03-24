@@ -1,5 +1,67 @@
 const API_URL = 'http://localhost:8007';
 
+// --- Auth helpers ---
+async function getToken() {
+    return new Promise((resolve) => {
+        chrome.storage.local.get(['authToken'], (result) => resolve(result.authToken || null));
+    });
+}
+
+async function setToken(token) {
+    return new Promise((resolve) => {
+        chrome.storage.local.set({ authToken: token }, resolve);
+    });
+}
+
+async function clearToken() {
+    return new Promise((resolve) => {
+        chrome.storage.local.remove(['authToken', 'authUser'], resolve);
+    });
+}
+
+async function getAuthUser() {
+    return new Promise((resolve) => {
+        chrome.storage.local.get(['authUser'], (result) => resolve(result.authUser || null));
+    });
+}
+
+async function setAuthUser(user) {
+    return new Promise((resolve) => {
+        chrome.storage.local.set({ authUser: user }, resolve);
+    });
+}
+
+// Fetch wrapper that injects Authorization header and handles 401
+async function authFetch(url, options = {}) {
+    const token = await getToken();
+    const headers = { ...(options.headers || {}) };
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
+    const response = await fetch(url, { ...options, headers });
+    if (response.status === 401) {
+        await clearToken();
+        showLoginPanel();
+        throw new Error('未登录或登录已过期，请重新登录');
+    }
+    return response;
+}
+
+function showLoginPanel() {
+    document.getElementById('login-panel').style.display = 'block';
+    document.getElementById('main-content').style.display = 'none';
+}
+
+function showMainPanel(user) {
+    document.getElementById('login-panel').style.display = 'none';
+    document.getElementById('main-content').style.display = 'block';
+    if (user) {
+        const nickname = user.nickname || user.username || user.nationalNumber || '已登录';
+        document.getElementById('user-info').textContent = `👤 ${nickname}`;
+        document.getElementById('user-bar').style.display = 'flex';
+    }
+}
+
 const getVal = (id) => document.getElementById(id).value;
 const log = (msg) => {
     const el = document.getElementById('log');
@@ -8,7 +70,31 @@ const log = (msg) => {
 };
 
 // Manifest V3 禁止 inline onclick，必须通过事件绑定
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    // --- Auth: check stored token on startup ---
+    const token = await getToken();
+    if (token) {
+        const user = await getAuthUser();
+        showMainPanel(user);
+        initConversation();
+    } else {
+        showLoginPanel();
+    }
+
+    // --- Login form ---
+    document.getElementById('btn-login').addEventListener('click', handleLogin);
+    document.getElementById('login-password').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') handleLogin();
+    });
+
+    // --- Logout ---
+    document.getElementById('btn-logout').addEventListener('click', async () => {
+        await clearToken();
+        document.getElementById('user-bar').style.display = 'none';
+        showLoginPanel();
+        log('已退出登录');
+    });
+
     document.getElementById('btn-attach').addEventListener('click', connectCurrentTab);
     document.getElementById('btn-takeover').addEventListener('click', () => {
         sendAction('TAKE_OVER');
@@ -36,6 +122,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Tasks panel listeners
     document.getElementById('btn-refresh-tasks').addEventListener('click', loadTasks);
+
+    // Task list collapse toggle
+    let taskListCollapsed = false;
+    document.getElementById('task-list-collapse-btn').addEventListener('click', () => {
+        taskListCollapsed = !taskListCollapsed;
+        const listEl = document.getElementById('task-list');
+        const countEl = document.getElementById('task-list-count');
+        const btn = document.getElementById('task-list-collapse-btn');
+        if (taskListCollapsed) {
+            listEl.style.display = 'none';
+            btn.textContent = '\u25b8';
+            countEl.style.display = 'inline';
+        } else {
+            listEl.style.display = 'block';
+            btn.textContent = '\u25be';
+            countEl.style.display = 'none';
+        }
+    });
     document.getElementById('btn-task-interact').addEventListener('click', () => {
         const msg = document.getElementById('task-interact-input').value.trim();
         if (msg && currentTaskId) {
@@ -56,10 +160,51 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btn-task-cancel').addEventListener('click', () => {
         if (currentTaskId) cancelTask(currentTaskId);
     });
-
-    // Initialize Conversation
-    initConversation();
 });
+
+async function handleLogin() {
+    const countryCode = document.getElementById('login-country-code').value.trim() || '86';
+    const nationalNumber = document.getElementById('login-phone').value.trim();
+    const password = document.getElementById('login-password').value;
+    const errorEl = document.getElementById('login-error');
+    const btnLogin = document.getElementById('btn-login');
+
+    errorEl.textContent = '';
+    if (!nationalNumber || !password) {
+        errorEl.textContent = '请填写手机号和密码';
+        return;
+    }
+
+    btnLogin.disabled = true;
+    btnLogin.textContent = '登录中...';
+
+    try {
+        const response = await fetch(`${API_URL}/api/v1/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ countryCode, nationalNumber, password })
+        });
+
+        const result = await response.json();
+
+        if (result.code === 0 && result.data && result.data.token) {
+            await setToken(result.data.token);
+            const user = result.data.user || {};
+            await setAuthUser(user);
+            document.getElementById('login-password').value = '';
+            showMainPanel(user);
+            initConversation();
+            log(`✅ 登录成功`);
+        } else {
+            errorEl.textContent = result.message || '登录失败，请检查账号密码';
+        }
+    } catch (err) {
+        errorEl.textContent = `网络错误: ${err.message}`;
+    } finally {
+        btnLogin.disabled = false;
+        btnLogin.textContent = '登录';
+    }
+}
 
 // --- Chat state ---
 let conversationId = null;
@@ -116,15 +261,17 @@ async function loadTasks() {
     listEl.innerHTML = '<p style="color: #999; text-align: center; font-size: 12px;">加载中...</p>';
 
     try {
-        const response = await fetch(`${API_URL}/api/v1/tasks`);
+        const response = await authFetch(`${API_URL}/api/v1/tasks`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
 
         // data may be an array or { tasks: [...] }
         const tasks = Array.isArray(data) ? data : (data.tasks || []);
 
+        const countEl = document.getElementById('task-list-count');
         if (tasks.length === 0) {
             listEl.innerHTML = '<p style="color: #999; text-align: center; font-size: 12px;">暂无后台任务</p>';
+            countEl.textContent = '0';
             return;
         }
 
@@ -133,6 +280,7 @@ async function loadTasks() {
             const card = createTaskCard(task);
             listEl.appendChild(card);
         });
+        countEl.textContent = tasks.length;
     } catch (err) {
         listEl.innerHTML = `<p style="color: red; font-size: 12px;">加载失败: ${err.message}</p>`;
         log(`❌ 加载任务列表失败: ${err.message}`);
@@ -206,16 +354,11 @@ async function viewTask(taskId) {
     taskEventAbortController = new AbortController();
 
     try {
-        const response = await fetch(`${API_URL}/api/v1/tasks/${taskId}/events`, {
+        const response = await authFetch(`${API_URL}/api/v1/tasks/${taskId}/events`, {
             signal: taskEventAbortController.signal
         });
 
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-        // Create a container for the streaming events (reuse handleStreamPayload pattern)
-        const agentMsgEl = document.createElement('div');
-        agentMsgEl.className = 'chat-msg msg-agent';
-        streamEl.appendChild(agentMsgEl);
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -239,7 +382,7 @@ async function viewTask(taskId) {
 
                     try {
                         const payload = JSON.parse(dataStr);
-                        handleStreamPayload(agentMsgEl, payload);
+                        handleStreamPayload(streamEl, payload);
                         streamEl.scrollTop = streamEl.scrollHeight;
                     } catch (e) {
                         console.error('Task event JSON parse error:', e, dataStr);
@@ -262,7 +405,7 @@ async function cancelTask(taskId) {
     if (!confirm(`确定要取消任务 ${taskId.substring(0, 12)}... 吗？`)) return;
 
     try {
-        const response = await fetch(`${API_URL}/api/v1/tasks/${taskId}/cancel`, {
+        const response = await authFetch(`${API_URL}/api/v1/tasks/${taskId}/cancel`, {
             method: 'POST'
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -275,7 +418,7 @@ async function cancelTask(taskId) {
 
 async function interactTask(taskId, message) {
     try {
-        const response = await fetch(`${API_URL}/api/v1/tasks/${taskId}/interact`, {
+        const response = await authFetch(`${API_URL}/api/v1/tasks/${taskId}/interact`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message })
@@ -295,6 +438,7 @@ async function sendMessage(overrideText = null, isSilent = false) {
     if (!text || isThinking) return;
 
     const isBackground = document.getElementById('bgToggle').checked;
+    const isExplore = document.getElementById('exploreToggle') ? document.getElementById('exploreToggle').checked : false;
 
     // 1. UI Feedback
     if (!overrideText) inputEl.value = '';
@@ -305,6 +449,61 @@ async function sendMessage(overrideText = null, isSilent = false) {
 
     if (!isSilent) {
         appendChatMessage('user', text);
+    }
+
+    if (isExplore) {
+        // --- 探索模式 (调用 /api/v1/agent/explore) ---
+        try {
+            const formData = new FormData();
+            formData.append('question', text);
+
+            const storageResult = await new Promise(resolve => chrome.storage.local.get(['clientId'], resolve));
+            const clientId = storageResult.clientId;
+            formData.append('client_id', clientId);
+
+            // 尝试获取当前页面的 URL 作为初始探索点
+            const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+            if (activeTab && activeTab.url && !activeTab.url.startsWith('chrome://') && !activeTab.url.startsWith('edge://')) {
+                formData.append('initial_url', activeTab.url);
+            }
+
+            const response = await authFetch(`${API_URL}/api/v1/agent/explore`, {
+                method: 'POST',
+                body: formData,
+                signal: currentAbortController.signal
+            });
+
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+            const data = await response.json();
+            const taskId = data.task_id;
+
+            if (taskId) {
+                log(`🚀 探索任务已创建: ${taskId}`);
+                appendChatMessage('agent', `探索任务已创建，任务ID: ${taskId.substring(0, 16)}...`);
+                // 切换到任务面板并加载事件
+                switchTab('tasks');
+                await loadTasks();
+                viewTask(taskId);
+            } else {
+                log(`⚠️ 探索任务响应无 task_id`);
+                appendChatMessage('agent', `探索任务已提交，请在"后台任务"面板查看进度。`);
+                switchTab('tasks');
+                loadTasks();
+            }
+        } catch (err) {
+            if (err.name === 'AbortError') {
+                log(`⏹️ 探索任务提交已取消`);
+            } else {
+                log(`❌ 探索任务提交失败: ${err.message}`);
+            }
+        } finally {
+            isThinking = false;
+            currentAbortController = null;
+            document.getElementById('btn-send').style.display = 'block';
+            document.getElementById('btn-stop').style.display = 'none';
+        }
+        return;
     }
 
     if (isBackground) {
@@ -320,7 +519,7 @@ async function sendMessage(overrideText = null, isSilent = false) {
             const clientId = storageResult.clientId;
             formData.append('injected_context', JSON.stringify({ source: 'web', clientId: clientId }));
 
-            const response = await fetch(`${API_URL}/api/v1/agent/chat`, {
+            const response = await authFetch(`${API_URL}/api/v1/agent/chat`, {
                 method: 'POST',
                 body: formData,
                 signal: currentAbortController.signal
@@ -375,7 +574,7 @@ async function sendMessage(overrideText = null, isSilent = false) {
 
         formData.append('injected_context', JSON.stringify({ source: 'web', clientId: clientId }));
 
-        const response = await fetch(`${API_URL}/api/v1/agent/chat`, {
+        const response = await authFetch(`${API_URL}/api/v1/agent/chat`, {
             method: 'POST',
             body: formData,
             signal: currentAbortController.signal
@@ -433,25 +632,28 @@ function handleStreamPayload(container, payload) {
         const history = document.getElementById('chat-history');
 
         if (payload.subtype === 'react_thought_slice') {
-            // 流式思考片段
-            let thoughtEl = container.querySelector('.msg-thought');
+            // 流式思考片段：复用当前轮次的思考块（data-current-thought 标记），无则新建
+            let thoughtEl = container.querySelector('[data-current-thought]');
             if (!thoughtEl) {
                 thoughtEl = document.createElement('div');
                 thoughtEl.className = 'msg-thought';
+                thoughtEl.setAttribute('data-current-thought', '1');
                 container.appendChild(thoughtEl);
             }
             thoughtEl.textContent += payload.chunk;
         } else if (payload.subtype === 'react_thought') {
-            // 完整思考过程 (覆盖掉 slice 的积累，确保展示最准确的 thought)
-            let thoughtEl = container.querySelector('.msg-thought');
+            // 完整思考：同上，覆盖 slice 积累的内容
+            let thoughtEl = container.querySelector('[data-current-thought]');
             if (!thoughtEl) {
                 thoughtEl = document.createElement('div');
                 thoughtEl.className = 'msg-thought';
+                thoughtEl.setAttribute('data-current-thought', '1');
                 container.appendChild(thoughtEl);
             }
             thoughtEl.textContent = payload.thought;
         } else if (payload.subtype === 'react_action') {
-            // 工具调用
+            // 工具调用：清除思考标记，下一轮 thought 会在底部新建
+            container.querySelectorAll('[data-current-thought]').forEach(el => el.removeAttribute('data-current-thought'));
             const actionEl = document.createElement('div');
             actionEl.className = 'msg-action';
             actionEl.textContent = `🛠️ 执行: ${payload.tool_name}(...)`;
