@@ -138,69 +138,33 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   return true;
 });
 
-// --- DolphinDB connection state ---
-let ddbConfig = null;   // { host, port, user, pass }
-let ddbConnected = false;
-
-async function ddbLogin(host, port, user, pass) {
-  const url = `http://${host}:${port}/`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `login("${user}","${pass}")`
-  });
-  if (!resp.ok) throw new Error(`DolphinDB HTTP ${resp.status}`);
-  const text = await resp.text();
-  return text;
-}
-
-async function ddbExecute(script) {
-  if (!ddbConfig || !ddbConnected) throw new Error('DolphinDB 未连接');
-  const { host, port } = ddbConfig;
-  const url = `http://${host}:${port}/`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: script
-  });
-  if (!resp.ok) throw new Error(`DolphinDB HTTP ${resp.status}`);
-  const text = await resp.text();
-  return text;
-}
+// --- DolphinDB: use official JS API via bundled ESM module ---
+import './dist/ddb-bundle.js';
 
 async function handleRequest(request) {
 
-  // --- DolphinDB actions ---
+  // --- DolphinDB actions (via official JS API) ---
   if (request.action === "DDB_CONNECT") {
     const { host, port, user, pass } = request;
     try {
-      const result = await ddbLogin(host, port, user, pass);
-      ddbConfig = { host, port, user, pass };
-      ddbConnected = true;
-      // Persist config
-      chrome.storage.local.set({ ddbConfig: { host, port, user, pass } });
-      return { connected: true, message: result };
+      const result = await globalThis.__ddb.connect(host, parseInt(port), user, pass);
+      return { connected: true, message: 'Connected via WebSocket' };
     } catch (err) {
-      ddbConnected = false;
-      ddbConfig = null;
       throw new Error('连接失败: ' + err.message);
     }
   }
 
   if (request.action === "DDB_EXECUTE") {
-    const result = await ddbExecute(request.script);
+    const result = await globalThis.__ddb.execute(request.script);
     return { result };
   }
 
   if (request.action === "DDB_DISCONNECT") {
-    ddbConfig = null;
-    ddbConnected = false;
-    chrome.storage.local.remove('ddbConfig');
-    return { connected: false };
+    return globalThis.__ddb.disconnect();
   }
 
   if (request.action === "DDB_STATUS") {
-    return { connected: ddbConnected, config: ddbConfig ? { host: ddbConfig.host, port: ddbConfig.port, user: ddbConfig.user } : null };
+    return globalThis.__ddb.status();
   }
 
   if (request.action === "OPEN_AND_ATTACH") {
@@ -491,17 +455,9 @@ if (chrome.sidePanel) {
 // 插件加载时（每次 Service Worker 唤醒时）立即发起连接
 connectBackend();
 
-// Restore DolphinDB connection config on service worker startup
-chrome.storage.local.get(['ddbConfig'], (result) => {
-  if (result.ddbConfig) {
-    const { host, port, user, pass } = result.ddbConfig;
-    ddbLogin(host, port, user, pass).then(() => {
-      ddbConfig = result.ddbConfig;
-      ddbConnected = true;
-      console.log('✅ DolphinDB 连接已恢复');
-    }).catch((err) => {
-      console.log('⚠️ DolphinDB 自动重连失败:', err.message);
-      ddbConnected = false;
-    });
-  }
-});
+// Restore DolphinDB connection on service worker startup (via official JS API)
+if (globalThis.__ddb) {
+  globalThis.__ddb.autoRestore().catch((err) => {
+    console.log('⚠️ DolphinDB auto-restore skipped:', err.message);
+  });
+}
