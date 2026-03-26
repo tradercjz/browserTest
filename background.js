@@ -147,7 +147,12 @@ async function handleRequest(request) {
   if (request.action === "DDB_CONNECT") {
     const { host, port, user, pass } = request;
     try {
-      const result = await globalThis.__ddb.connect(host, parseInt(port), user, pass);
+      await globalThis.__ddb.connect(host, parseInt(port), user, pass);
+      // Notify backend that sandbox is connected
+      notifyBackend("DDB_STATUS");
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "NOTIFICATION", action: "DDB_STATUS", connected: true, host, port: parseInt(port) }));
+      }
       return { connected: true, message: 'Connected via WebSocket' };
     } catch (err) {
       throw new Error('连接失败: ' + err.message);
@@ -160,7 +165,12 @@ async function handleRequest(request) {
   }
 
   if (request.action === "DDB_DISCONNECT") {
-    return globalThis.__ddb.disconnect();
+    const result = globalThis.__ddb.disconnect();
+    // Notify backend that sandbox is disconnected
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "NOTIFICATION", action: "DDB_STATUS", connected: false, host: "", port: 0 }));
+    }
+    return result;
   }
 
   if (request.action === "DDB_STATUS") {
