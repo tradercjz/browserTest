@@ -25,14 +25,13 @@ export async function ddbConnect(host, port, user, pass) {
   }
 
   const url = `ws://${host}:${port}`;
-  ddb = new DDB(url);
+  ddb = new DDB(url, {
+    autologin: !!user,
+    username: user || '',
+    password: pass || '',
+  });
 
   await ddb.connect();
-
-  // Login
-  if (user) {
-    await ddb.eval(`login("${user.replace(/"/g, '\\"')}","${pass.replace(/"/g, '\\"')}")`);
-  }
 
   ddbConfig = { host, port, user, pass };
   ddbConnected = true;
