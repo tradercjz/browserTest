@@ -473,6 +473,82 @@
         #main-content {
             display: none;
         }
+
+        /* DolphinDB panel */
+        #ddb-panel {
+            display: none;
+        }
+
+        .ddb-status-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #dc3545;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+
+        .ddb-status-dot.ddb-connected {
+            background: #28a745;
+        }
+
+        .ddb-field {
+            margin-bottom: 6px;
+        }
+
+        .ddb-field label {
+            display: block;
+            font-size: 11px;
+            color: #555;
+            margin-bottom: 2px;
+        }
+
+        .ddb-field-row {
+            display: flex;
+            gap: 6px;
+        }
+
+        .ddb-field-row input {
+            flex: 1;
+            margin-bottom: 0;
+        }
+
+        #ddb-host {
+            flex: 2;
+        }
+
+        #ddb-port {
+            flex: 1;
+        }
+
+        #ddb-result {
+            background: #2d2d2d;
+            color: #0f0;
+            padding: 8px;
+            height: 160px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 11px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        #ddb-script {
+            height: 60px;
+            font-family: monospace;
+            font-size: 12px;
+            resize: vertical;
+        }
+
+        #btn-ddb-run {
+            background: #17a2b8;
+        }
+
+        #btn-ddb-run:hover {
+            background: #138496;
+        }
     </style>
 </head>
 
@@ -534,6 +610,7 @@
             <div class="tab-bar">
                 <button class="tab-btn active" id="tab-chat-btn">🤖 Agent 对话</button>
                 <button class="tab-btn" id="tab-tasks-btn">📋 后台任务</button>
+                <button class="tab-btn" id="tab-ddb-btn">🐬 DolphinDB</button>
             </div>
 
             <!-- Chat panel -->
@@ -584,6 +661,42 @@
                         <button id="btn-task-interact">发送</button>
                     </div>
                     <button id="btn-task-cancel">取消任务</button>
+                </div>
+            </div>
+
+            <!-- DolphinDB panel -->
+            <div id="ddb-panel">
+                <div style="margin-bottom: 8px;">
+                    <span class="ddb-status-dot" id="ddb-status-dot"></span>
+                    <span id="ddb-status-text" style="font-size: 12px; color: #666;">未连接</span>
+                </div>
+                <div class="ddb-field">
+                    <label>服务器地址</label>
+                    <div class="ddb-field-row">
+                        <input type="text" id="ddb-host" placeholder="IP / Host" value="127.0.0.1" />
+                        <input type="text" id="ddb-port" placeholder="Port" value="8848" />
+                    </div>
+                </div>
+                <div class="ddb-field">
+                    <label>用户名</label>
+                    <input type="text" id="ddb-user" placeholder="用户名" value="admin" />
+                </div>
+                <div class="ddb-field">
+                    <label>密码</label>
+                    <input type="password" id="ddb-pass" placeholder="密码" value="123456" />
+                </div>
+                <div style="display: flex; gap: 6px; margin-bottom: 10px;">
+                    <button id="btn-ddb-connect" style="background: #28a745;">连接</button>
+                    <button id="btn-ddb-disconnect" style="background: #dc3545;">断开</button>
+                </div>
+                <div style="border-top: 1px solid #eee; padding-top: 8px;">
+                    <label style="font-size: 11px; color: #555; margin-bottom: 2px; display: block;">脚本执行</label>
+                    <textarea id="ddb-script" placeholder="输入 DolphinDB 脚本，例如: 1+1&#10;select * from table(1..5 as id)"></textarea>
+                    <button id="btn-ddb-run">执行脚本</button>
+                    <div style="margin-top: 6px;">
+                        <label style="font-size: 11px; color: #555; margin-bottom: 2px; display: block;">执行结果</label>
+                        <div id="ddb-result">等待执行...</div>
+                    </div>
                 </div>
             </div>
         </div>

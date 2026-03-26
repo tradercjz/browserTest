@@ -119,6 +119,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Tab switching
     document.getElementById('tab-chat-btn').addEventListener('click', () => switchTab('chat'));
     document.getElementById('tab-tasks-btn').addEventListener('click', () => switchTab('tasks'));
+    document.getElementById('tab-ddb-btn').addEventListener('click', () => switchTab('ddb'));
+
+    // DolphinDB panel listeners
+    document.getElementById('btn-ddb-connect').addEventListener('click', ddbConnect);
+    document.getElementById('btn-ddb-disconnect').addEventListener('click', ddbDisconnect);
+    document.getElementById('btn-ddb-run').addEventListener('click', ddbRunScript);
+    document.getElementById('ddb-script').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && e.ctrlKey) {
+            e.preventDefault();
+            ddbRunScript();
+        }
+    });
+
+    // Load persisted DolphinDB config and check status
+    ddbLoadConfig();
 
     // Tasks panel listeners
     document.getElementById('btn-refresh-tasks').addEventListener('click', loadTasks);
@@ -237,20 +252,29 @@ function resetConversation() {
 function switchTab(tab) {
     const chatPanel = document.getElementById('chat-panel');
     const tasksPanel = document.getElementById('tasks-panel');
+    const ddbPanel = document.getElementById('ddb-panel');
     const chatBtn = document.getElementById('tab-chat-btn');
     const tasksBtn = document.getElementById('tab-tasks-btn');
+    const ddbBtn = document.getElementById('tab-ddb-btn');
+
+    chatPanel.style.display = 'none';
+    tasksPanel.style.display = 'none';
+    ddbPanel.style.display = 'none';
+    chatBtn.classList.remove('active');
+    tasksBtn.classList.remove('active');
+    ddbBtn.classList.remove('active');
 
     if (tab === 'chat') {
         chatPanel.style.display = 'block';
-        tasksPanel.style.display = 'none';
         chatBtn.classList.add('active');
-        tasksBtn.classList.remove('active');
-    } else {
-        chatPanel.style.display = 'none';
+    } else if (tab === 'tasks') {
         tasksPanel.style.display = 'block';
-        chatBtn.classList.remove('active');
         tasksBtn.classList.add('active');
         loadTasks();
+    } else if (tab === 'ddb') {
+        ddbPanel.style.display = 'block';
+        ddbBtn.classList.add('active');
+        ddbCheckStatus();
     }
 }
 
@@ -821,6 +845,110 @@ function sendAction(action, data = {}) {
             log(`⚠️ 报错: ${response.message}`);
         } else {
             log(`✅ OK`);
+        }
+    });
+}
+
+// --- DolphinDB functions ---
+
+function ddbUpdateUI(connected, config) {
+    const dot = document.getElementById('ddb-status-dot');
+    const text = document.getElementById('ddb-status-text');
+    if (connected) {
+        dot.classList.add('ddb-connected');
+        text.textContent = `已连接 ${config ? config.host + ':' + config.port : ''}`;
+        text.style.color = '#155724';
+    } else {
+        dot.classList.remove('ddb-connected');
+        text.textContent = '未连接';
+        text.style.color = '#666';
+    }
+}
+
+async function ddbLoadConfig() {
+    chrome.storage.local.get(['ddbConfig'], (result) => {
+        if (result.ddbConfig) {
+            const { host, port, user } = result.ddbConfig;
+            document.getElementById('ddb-host').value = host || '127.0.0.1';
+            document.getElementById('ddb-port').value = port || '8848';
+            document.getElementById('ddb-user').value = user || 'admin';
+            // Don't restore password into the field for security; user re-enters or we keep it in storage
+        }
+    });
+    ddbCheckStatus();
+}
+
+function ddbCheckStatus() {
+    chrome.runtime.sendMessage({ action: 'DDB_STATUS' }, (response) => {
+        if (chrome.runtime.lastError || !response || response.status === 'error') {
+            ddbUpdateUI(false);
+            return;
+        }
+        ddbUpdateUI(response.data.connected, response.data.config);
+    });
+}
+
+function ddbConnect() {
+    const host = document.getElementById('ddb-host').value.trim();
+    const port = document.getElementById('ddb-port').value.trim();
+    const user = document.getElementById('ddb-user').value.trim();
+    const pass = document.getElementById('ddb-pass').value;
+
+    if (!host || !port) {
+        log('DolphinDB: 请填写服务器地址和端口');
+        return;
+    }
+
+    const btn = document.getElementById('btn-ddb-connect');
+    btn.disabled = true;
+    btn.textContent = '连接中...';
+
+    chrome.runtime.sendMessage({ action: 'DDB_CONNECT', host, port, user, pass }, (response) => {
+        btn.disabled = false;
+        btn.textContent = '连接';
+
+        if (chrome.runtime.lastError) {
+            log(`DolphinDB 连接失败: ${chrome.runtime.lastError.message}`);
+            ddbUpdateUI(false);
+            return;
+        }
+        if (response.status === 'error') {
+            log(`DolphinDB 连接失败: ${response.message}`);
+            ddbUpdateUI(false);
+        } else {
+            log(`DolphinDB 连接成功`);
+            ddbUpdateUI(true, { host, port });
+        }
+    });
+}
+
+function ddbDisconnect() {
+    chrome.runtime.sendMessage({ action: 'DDB_DISCONNECT' }, (response) => {
+        if (chrome.runtime.lastError) {
+            log(`DolphinDB 断开失败: ${chrome.runtime.lastError.message}`);
+            return;
+        }
+        log('DolphinDB 已断开');
+        ddbUpdateUI(false);
+    });
+}
+
+function ddbRunScript() {
+    const script = document.getElementById('ddb-script').value.trim();
+    if (!script) return;
+
+    const resultEl = document.getElementById('ddb-result');
+    resultEl.textContent = '执行中...';
+
+    chrome.runtime.sendMessage({ action: 'DDB_EXECUTE', script }, (response) => {
+        if (chrome.runtime.lastError) {
+            resultEl.textContent = `错误: ${chrome.runtime.lastError.message}`;
+            return;
+        }
+        if (response.status === 'error') {
+            resultEl.textContent = `错误: ${response.message}`;
+        } else {
+            resultEl.textContent = response.data.result;
         }
     });
 }
