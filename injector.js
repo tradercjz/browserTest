@@ -3,15 +3,9 @@
     const extId = chrome.runtime.id;
     const extVersion = chrome.runtime.getManifest().version;
 
-    // 1. Notify page via postMessage (works regardless of CSP; content script world is isolated)
-    // Send immediately + repeat a few times to handle React hydration race
-    const msg = { type: 'DOLPHINMIND_EXTENSION_READY', installed: true, extensionId: extId, version: extVersion };
-    window.postMessage(msg, '*');
-    let count = 0;
-    const iv = setInterval(() => {
-        window.postMessage(msg, '*');
-        if (++count >= 5) clearInterval(iv);
-    }, 500);
+    // 1. Set a DOM attribute on <html> — DOM is shared between content script and page
+    document.documentElement.setAttribute('data-dolphinmind-ext', extVersion);
+    document.documentElement.setAttribute('data-dolphinmind-ext-id', extId);
 
     console.log(`🔌 DolphinMind Extension v${extVersion} detected (${extId})`);
 
