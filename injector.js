@@ -3,16 +3,15 @@
     const extId = chrome.runtime.id;
     const extVersion = chrome.runtime.getManifest().version;
 
-    // 1. Inject into page context (content scripts are isolated, page can't see our window)
-    const script = document.createElement('script');
-    script.textContent = `
-        window.__dolphinmind_extension = { installed: true, extensionId: "${extId}", version: "${extVersion}" };
-        window.dispatchEvent(new CustomEvent('dolphinmind-extension-ready', {
-            detail: { installed: true, extensionId: "${extId}", version: "${extVersion}" }
-        }));
-    `;
-    (document.head || document.documentElement).appendChild(script);
-    script.remove();
+    // 1. Notify page via postMessage (works regardless of CSP; content script world is isolated)
+    // Send immediately + repeat a few times to handle React hydration race
+    const msg = { type: 'DOLPHINMIND_EXTENSION_READY', installed: true, extensionId: extId, version: extVersion };
+    window.postMessage(msg, '*');
+    let count = 0;
+    const iv = setInterval(() => {
+        window.postMessage(msg, '*');
+        if (++count >= 5) clearInterval(iv);
+    }, 500);
 
     console.log(`🔌 DolphinMind Extension v${extVersion} detected (${extId})`);
 
