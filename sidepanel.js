@@ -71,13 +71,16 @@ const log = (msg) => {
 
 // Manifest V3 禁止 inline onclick，必须通过事件绑定
 document.addEventListener('DOMContentLoaded', async () => {
+    console.log('[Sidepanel] DOMContentLoaded — 初始化中...');
     // --- Auth: check stored token on startup ---
     const token = await getToken();
     if (token) {
         const user = await getAuthUser();
+        console.log('[Sidepanel] 已找到存储的 Token，自动登录用户:', user?.username || user?.nationalNumber || '(unknown)');
         showMainPanel(user);
         initConversation();
     } else {
+        console.log('[Sidepanel] 未找到 Token，显示登录界面');
         showLoginPanel();
     }
 
@@ -192,6 +195,7 @@ async function handleLogin() {
 
     btnLogin.disabled = true;
     btnLogin.textContent = '登录中...';
+    console.log(`[Sidepanel] 尝试登录: +${countryCode} ${nationalNumber}`);
 
     try {
         const response = await fetch(`${API_URL}/api/v1/auth/login`, {
@@ -206,14 +210,17 @@ async function handleLogin() {
             await setToken(result.data.token);
             const user = result.data.user || {};
             await setAuthUser(user);
+            console.log('[Sidepanel] 登录成功，用户信息:', user);
             document.getElementById('login-password').value = '';
             showMainPanel(user);
             initConversation();
             log(`✅ 登录成功`);
         } else {
+            console.warn('[Sidepanel] 登录失败:', result.message, 'code:', result.code);
             errorEl.textContent = result.message || '登录失败，请检查账号密码';
         }
     } catch (err) {
+        console.error('[Sidepanel] 登录网络错误:', err);
         errorEl.textContent = `网络错误: ${err.message}`;
     } finally {
         btnLogin.disabled = false;
@@ -463,6 +470,7 @@ async function sendMessage(overrideText = null, isSilent = false) {
 
     const isBackground = document.getElementById('bgToggle').checked;
     const isExplore = document.getElementById('exploreToggle') ? document.getElementById('exploreToggle').checked : false;
+    console.log(`[Sidepanel] 发送消息 | mode=${isExplore ? 'explore' : isBackground ? 'background' : 'stream'} | conv=${conversationId} | text="${text.substring(0, 60)}${text.length > 60 ? '...' : ''}"`);
 
     // 1. UI Feedback
     if (!overrideText) inputEl.value = '';
@@ -626,6 +634,7 @@ async function sendMessage(overrideText = null, isSilent = false) {
 
                     try {
                         const payload = JSON.parse(dataStr);
+                        console.log('[Sidepanel] SSE payload:', payload.type, payload.subtype || '', payload.tool_name || '');
                         handleStreamPayload(agentMsgEl, payload);
                         chatHistoryEl.scrollTop = chatHistoryEl.scrollHeight;
                     } catch (e) {
@@ -713,6 +722,7 @@ function appendChatMessage(role, text) {
 }
 
 async function connectCurrentTab() {
+    console.log('[Sidepanel] 尝试接管当前标签页...');
     // 获取用户最后聚焦的浏览器窗口中的活动标签页（避免把侧边栏本身当成窗口）
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     if (!tab) {
@@ -728,12 +738,15 @@ async function connectCurrentTab() {
 
     log(`正在接管: ${tab.title || tab.url}`);
 
+    console.log(`[Sidepanel] 目标 Tab: id=${tab.id} | url=${tab.url}`);
     // 通知 background 挂载 Debugger 到这个 tab
     chrome.runtime.sendMessage({ action: 'ATTACH_CURRENT_TAB', tabId: tab.id }, (response) => {
         if (chrome.runtime.lastError) {
+            console.error('[Sidepanel] ATTACH_CURRENT_TAB 通信失败:', chrome.runtime.lastError.message);
             log(`❌ 通信失败: ${chrome.runtime.lastError.message}`);
             return;
         }
+        console.log('[Sidepanel] ATTACH_CURRENT_TAB 响应:', response);
         if (response.status === 'error') {
             // CDP 可能会报 Already attached 这种错
             log(`⚠️ 挂载反馈: ${response.message}`);
@@ -832,13 +845,16 @@ function renderTabList(tabsArray) {
 
 function sendAction(action, data = {}) {
     const payload = { action, ...data };
+    console.log('[Sidepanel] sendAction:', payload);
     log(`下发指令: ${action}`);
 
     chrome.runtime.sendMessage(payload, (response) => {
         if (chrome.runtime.lastError) {
+            console.error('[Sidepanel] sendAction 通信失败:', chrome.runtime.lastError.message);
             log(`❌ 通信失败: ${chrome.runtime.lastError.message}`);
             return;
         }
+        console.log('[Sidepanel] sendAction 响应:', response);
         if (!response) return;
 
         if (response.status === 'error') {
@@ -898,6 +914,7 @@ function ddbConnect() {
         log('DolphinDB: 请填写服务器地址和端口');
         return;
     }
+    console.log(`[Sidepanel] DDB 连接: ${user}@${host}:${port}`);
 
     const btn = document.getElementById('btn-ddb-connect');
     btn.disabled = true;
@@ -908,10 +925,12 @@ function ddbConnect() {
         btn.textContent = '连接';
 
         if (chrome.runtime.lastError) {
+            console.error('[Sidepanel] DDB_CONNECT 通信失败:', chrome.runtime.lastError.message);
             log(`DolphinDB 连接失败: ${chrome.runtime.lastError.message}`);
             ddbUpdateUI(false);
             return;
         }
+        console.log('[Sidepanel] DDB_CONNECT 响应:', response);
         if (response.status === 'error') {
             log(`DolphinDB 连接失败: ${response.message}`);
             ddbUpdateUI(false);
@@ -936,15 +955,18 @@ function ddbDisconnect() {
 function ddbRunScript() {
     const script = document.getElementById('ddb-script').value.trim();
     if (!script) return;
+    console.log('[Sidepanel] DDB 执行脚本:', script.substring(0, 200));
 
     const resultEl = document.getElementById('ddb-result');
     resultEl.textContent = '执行中...';
 
     chrome.runtime.sendMessage({ action: 'DDB_EXECUTE', script }, (response) => {
         if (chrome.runtime.lastError) {
+            console.error('[Sidepanel] DDB_EXECUTE 通信失败:', chrome.runtime.lastError.message);
             resultEl.textContent = `错误: ${chrome.runtime.lastError.message}`;
             return;
         }
+        console.log('[Sidepanel] DDB_EXECUTE 响应:', response);
         if (response.status === 'error') {
             resultEl.textContent = `错误: ${response.message}`;
         } else {

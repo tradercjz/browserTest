@@ -142,6 +142,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 import './dist/ddb-bundle.js';
 
 async function handleRequest(request) {
+  if (request.action !== 'GET_STATUS' && request.action !== 'PING' && request.action !== 'PONG') {
+    console.log(`[Background] handleRequest: action=${request.action}`, request.tabId ? `tabId=${request.tabId}` : '');
+  }
 
   // --- DolphinDB actions (via official JS API) ---
   if (request.action === "DDB_CONNECT") {
@@ -432,9 +435,12 @@ async function connectBackend() {
     try {
       if (req.action === "PING" || req.action === "PONG") return; // 忽略心跳包
 
+      console.log(`[Background] 收到后端指令: id=${req.id} action=${req.action}`);
       const data = await handleRequest(req);
       ws.send(JSON.stringify({ id: req.id, status: "success", data: data }));
+      console.log(`[Background] 指令成功: id=${req.id} action=${req.action}`);
     } catch (err) {
+      console.error(`[Background] 指令失败: id=${req.id} action=${req.action}`, err.message);
       ws.send(JSON.stringify({ id: req.id, status: "error", message: err.message }));
     }
   };
