@@ -557,10 +557,11 @@ async function connectBackend() {
 
       console.log(`[Background] 收到后端指令: id=${req.id} action=${req.action}`);
       const data = await handleRequest(req);
-      ws.send(JSON.stringify({ id: req.id, status: "success", data: data }));
-      console.log(`[Background] 指令成功: id=${req.id} action=${req.action}`);
+      const response = { id: req.id, status: "success", data: data };
+      console.log(`[Background] 指令成功: id=${req.id} action=${req.action}, response_size=${JSON.stringify(response).length}`);
+      ws.send(JSON.stringify(response));
     } catch (err) {
-      console.error(`[Background] 指令失败: id=${req.id} action=${req.action}`, err.message);
+      console.error(`[Background] 指令失败: id=${req.id} action=${req.action}`, err.message, err.stack);
       ws.send(JSON.stringify({ id: req.id, status: "error", message: err.message }));
     }
   };

@@ -1,13 +1,12 @@
 // injector.js — DolphinMind Browser Extension content script
 (function() {
-    const extId = chrome.runtime.id;
-    const extVersion = chrome.runtime.getManifest().version;
+    // 1. Set global marker so the web app can detect the extension
+    const detail = { installed: true, extensionId: chrome.runtime.id, version: chrome.runtime.getManifest().version };
+    window.__dolphinmind_extension = detail;
+    // Also dispatch a custom event for apps that listen dynamically
+    window.dispatchEvent(new CustomEvent('dolphinmind-extension-ready', { detail }));
 
-    // 1. Set a DOM attribute on <html> — DOM is shared between content script and page
-    document.documentElement.setAttribute('data-dolphinmind-ext', extVersion);
-    document.documentElement.setAttribute('data-dolphinmind-ext-id', extId);
-
-    console.log(`🔌 DolphinMind Extension v${extVersion} detected (${extId})`);
+    console.log(`🔌 DolphinMind Extension v${detail.version} detected (${detail.extensionId})`);
 
     // 2. Sync clientId + sandbox config from webpage localStorage → background script
     function syncClientId() {
