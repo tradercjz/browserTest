@@ -174,7 +174,26 @@ async function handleRequest(request) {
     const MAX_RETRIES = 2;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const result = await globalThis.__ddb.execute(request.script);
+        const rawResult = await globalThis.__ddb.execute(request.script);
+        // DdbObj is not JSON-serializable — extract plain value
+        let result;
+        if (rawResult === null || rawResult === undefined) {
+          result = "(void)";
+        } else if (typeof rawResult === 'object' && rawResult.value !== undefined) {
+          // DdbObj has a .value property with the plain JS value
+          result = rawResult.value;
+        } else if (typeof rawResult === 'object' && rawResult.toString && rawResult.constructor?.name !== 'Object' && rawResult.constructor?.name !== 'Array') {
+          // Fallback: use toString() for other DDB-specific objects
+          result = rawResult.toString();
+        } else {
+          result = rawResult;
+        }
+        // Final safety: ensure result is JSON-serializable
+        try {
+          JSON.stringify(result);
+        } catch (_) {
+          result = String(result);
+        }
         console.log(`[Background] DDB_EXECUTE success (attempt ${attempt}): result_type=${typeof result}, result_preview=`, JSON.stringify(result)?.substring(0, 300));
         return { result };
       } catch (err) {
