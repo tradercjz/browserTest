@@ -87,7 +87,7 @@
                     requestId,
                     success: !runtimeError && isStatusSuccess,
                     // If status is success, result is in resp.data.result
-                    data: (resp?.data && resp.data.result !== undefined) ? String(resp.data.result) : '',
+                    data: (resp?.data && resp.data.result !== undefined) ? (typeof resp.data.result === 'object' ? JSON.stringify(resp.data.result) : String(resp.data.result)) : '',
                     // Error is in runtimeError, or resp.message if status is error
                     error: runtimeError?.message || (resp?.status === 'error' ? resp.message : ''),
                 }, '*');
