@@ -216,24 +216,56 @@ async function handleRequest(request) {
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
         const rawResult = await globalThis.__ddb.execute(request.script);
-        // DdbObj is not JSON-serializable — extract plain value
+        // DdbObj → structured JSON for rich rendering
         let result;
         if (rawResult === null || rawResult === undefined) {
-          result = "(void)";
+          result = { _type: 'void', value: '(void)' };
+        } else if (typeof rawResult === 'object' && rawResult.form !== undefined) {
+          // DdbObj: check form to determine type
+          // form: 0=scalar, 1=vector, 2=pair, 3=matrix, 4=set, 5=dict, 6=table
+          const form = rawResult.form;
+          if (form === 6 && rawResult.value && Array.isArray(rawResult.value)) {
+            // Table: rawResult.value is array of DdbObj columns
+            // rawResult.name is column name, each column.value is data array
+            try {
+              const columns = rawResult.value;
+              const colNames = columns.map(c => c.name || '');
+              const rowCount = columns[0]?.value?.length || 0;
+              const rows = [];
+              for (let r = 0; r < Math.min(rowCount, 1000); r++) {
+                const row = {};
+                for (let c = 0; c < columns.length; c++) {
+                  const val = columns[c].value?.[r];
+                  row[colNames[c]] = val !== null && val !== undefined ? String(val) : '';
+                }
+                rows.push(row);
+              }
+              result = { _type: 'table', columns: colNames, rows, totalRows: rowCount };
+            } catch (e) {
+              result = { _type: 'text', value: String(rawResult.value) };
+            }
+          } else if (form === 1 && rawResult.value) {
+            // Vector: show as array
+            const arr = Array.isArray(rawResult.value) ? rawResult.value.slice(0, 1000).map(String) : [String(rawResult.value)];
+            result = { _type: 'vector', value: arr, totalLength: rawResult.value.length || arr.length };
+          } else if (form === 0) {
+            // Scalar
+            result = { _type: 'scalar', value: rawResult.value !== undefined ? String(rawResult.value) : String(rawResult) };
+          } else {
+            // Other forms: stringify
+            const val = rawResult.value !== undefined ? rawResult.value : rawResult;
+            result = { _type: 'text', value: typeof val === 'object' ? JSON.stringify(val) : String(val) };
+          }
         } else if (typeof rawResult === 'object' && rawResult.value !== undefined) {
-          // DdbObj has a .value property with the plain JS value
-          result = rawResult.value;
-        } else if (typeof rawResult === 'object' && rawResult.toString && rawResult.constructor?.name !== 'Object' && rawResult.constructor?.name !== 'Array') {
-          // Fallback: use toString() for other DDB-specific objects
-          result = rawResult.toString();
+          result = { _type: 'text', value: String(rawResult.value) };
         } else {
-          result = rawResult;
+          result = { _type: 'text', value: String(rawResult) };
         }
         // Final safety: ensure result is JSON-serializable
         try {
           JSON.stringify(result);
         } catch (_) {
-          result = String(result);
+          result = { _type: 'text', value: String(result) };
         }
         console.log(`[Background] DDB_EXECUTE success (attempt ${attempt}): result_type=${typeof result}, result_preview=`, JSON.stringify(result)?.substring(0, 300));
         return { result };
