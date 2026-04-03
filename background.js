@@ -516,6 +516,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })();
     return true;
   }
+
+  // Handle DDB_EXECUTE from injector.js (content script bridge for webpage)
+  if (message.action === 'DDB_EXECUTE' && message.script) {
+    (async () => {
+      try {
+        const rawResult = await globalThis.__ddb.execute(message.script);
+        let result;
+        if (rawResult === null || rawResult === undefined) {
+          result = '(void)';
+        } else if (typeof rawResult === 'object' && rawResult.value !== undefined) {
+          result = rawResult.value;
+        } else if (typeof rawResult === 'object' && rawResult.toString && rawResult.constructor?.name !== 'Object' && rawResult.constructor?.name !== 'Array') {
+          result = rawResult.toString();
+        } else {
+          result = rawResult;
+        }
+        try { JSON.stringify(result); } catch { result = String(result); }
+        sendResponse({ result });
+      } catch (err) {
+        sendResponse({ error: err.message || 'DDB execution failed' });
+      }
+    })();
+    return true; // keep sendResponse channel open for async
+  }
 });
 
 async function connectBackend() {

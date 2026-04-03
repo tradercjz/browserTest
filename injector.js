@@ -67,7 +67,24 @@
         }
     });
 
-    // 3. Legacy: inject into #extId input if present
+    // 3. Bridge: allow webpage to execute DDB scripts via CustomEvent
+    window.addEventListener('dolphinmind-execute', (e) => {
+        const { requestId, script } = e.detail || {};
+        if (!script || !requestId) return;
+        chrome.runtime.sendMessage({ action: 'DDB_EXECUTE', script }, (resp) => {
+            const error = chrome.runtime.lastError;
+            window.dispatchEvent(new CustomEvent('dolphinmind-execute-result', {
+                detail: {
+                    requestId,
+                    success: !error && resp && !resp.error,
+                    data: resp?.result !== undefined ? String(resp.result) : (resp?.data ? String(resp.data) : ''),
+                    error: error?.message || resp?.error || resp?.message || '',
+                }
+            }));
+        });
+    });
+
+    // 4. Legacy: inject into #extId input if present
     function tryInject() {
         const inputField = document.getElementById('extId');
         if (inputField) {
