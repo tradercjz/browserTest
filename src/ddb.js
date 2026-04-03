@@ -45,7 +45,8 @@ export async function ddbConnect(host, port, user, pass) {
 }
 
 /**
- * Execute a DolphinDB script and return the result.
+ * Execute a DolphinDB script and return the raw DdbObj result.
+ * background.js handles structured conversion to JSON.
  * @param {string} script
  * @returns {Promise<any>}
  */
@@ -56,8 +57,8 @@ export async function ddbExecute(script) {
 
   const result = await ddb.eval(script);
 
-  // Convert result to a display-friendly format
-  return formatResult(result);
+  // Return raw DdbObj — let background.js handle structured conversion
+  return result;
 }
 
 /**

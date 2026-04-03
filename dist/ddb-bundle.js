@@ -13657,7 +13657,7 @@ async function ddbExecute(script) {
     throw new Error("DolphinDB \u672A\u8FDE\u63A5");
   }
   const result = await ddb.eval(script);
-  return formatResult(result);
+  return result;
 }
 function ddbDisconnect() {
   if (ddb) {
@@ -13696,52 +13696,6 @@ async function ddbAutoRestore() {
       resolve();
     });
   });
-}
-function formatResult(result) {
-  if (result === null || result === void 0) return "void";
-  if (typeof result === "string" || typeof result === "number" || typeof result === "boolean") {
-    return String(result);
-  }
-  if (result.value !== void 0) {
-    return formatDDBValue(result);
-  }
-  try {
-    return JSON.stringify(result, null, 2);
-  } catch {
-    return String(result);
-  }
-}
-function formatDDBValue(obj) {
-  const val = obj.value;
-  if (val === null || val === void 0) return "NULL";
-  if (Array.isArray(obj.columns) && Array.isArray(val)) {
-    return formatTable(obj.columns, val, obj.rows);
-  }
-  if (Array.isArray(val)) {
-    if (val.length > 100) {
-      return `[${val.slice(0, 50).join(", ")}, ... (${val.length} items)]`;
-    }
-    return `[${val.join(", ")}]`;
-  }
-  return String(val);
-}
-function formatTable(columns, colData, rowCount) {
-  if (!columns.length || !rowCount) return "(empty table)";
-  const maxRows = Math.min(rowCount, 20);
-  const lines = [];
-  lines.push(columns.join("	"));
-  lines.push(columns.map(() => "---").join("	"));
-  for (let r2 = 0; r2 < maxRows; r2++) {
-    const row = columns.map((_, ci) => {
-      const v = colData[ci]?.[r2];
-      return v === null || v === void 0 ? "" : String(v);
-    });
-    lines.push(row.join("	"));
-  }
-  if (rowCount > maxRows) {
-    lines.push(`... (${rowCount} rows total)`);
-  }
-  return lines.join("\n");
 }
 var ddb, ddbConfig, ddbConnected;
 var init_ddb = __esm({

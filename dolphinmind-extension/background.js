@@ -171,14 +171,96 @@ async function handleRequest(request) {
     console.log(`[Background] DDB_EXECUTE: script_len=${request.script?.length}, id=${request.id}`);
     console.log(`[Background] DDB_EXECUTE script preview:`, request.script?.substring(0, 200));
 
+    // Helper: safely convert a value to string (handles BigInt, typed arrays, etc.)
+    function safeStr(v) {
+      if (v === null || v === undefined) return '';
+      if (typeof v === 'bigint') return v.toString();
+      return String(v);
+    }
+
+    // Helper: convert array-like (TypedArray, Array, BigInt64Array) to string array
+    function toStringArray(arr, maxLen = 1000) {
+      if (!arr) return [];
+      const len = Math.min(arr.length || 0, maxLen);
+      const out = [];
+      for (let i = 0; i < len; i++) {
+        out.push(safeStr(arr[i]));
+      }
+      return out;
+    }
+
     const MAX_RETRIES = 2;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const result = await globalThis.__ddb.execute(request.script);
-        console.log(`[Background] DDB_EXECUTE success (attempt ${attempt}): result_type=${typeof result}, result_preview=`, JSON.stringify(result)?.substring(0, 300));
+        const rawResult = await globalThis.__ddb.execute(request.script);
+        // DdbObj → structured JSON for rich rendering
+        let result;
+
+        if (rawResult === null || rawResult === undefined) {
+          result = { _type: 'void', value: '(void)' };
+        } else if (typeof rawResult === 'object' && rawResult.form !== undefined) {
+          const form = rawResult.form;
+          if (form === 6 && rawResult.value) {
+            // Table
+            try {
+              const columns = rawResult.value;
+              const colNames = [];
+              for (let c = 0; c < columns.length; c++) colNames.push(columns[c].name || `col${c}`);
+              const firstColVal = columns[0]?.value;
+              const rowCount = firstColVal ? (firstColVal.length || 0) : 0;
+              const maxRows = Math.min(rowCount, 1000);
+              const rows = [];
+              for (let r = 0; r < maxRows; r++) {
+                const row = {};
+                for (let c = 0; c < columns.length; c++) row[colNames[c]] = safeStr(columns[c].value?.[r]);
+                rows.push(row);
+              }
+              result = { _type: 'table', columns: colNames, rows, totalRows: rowCount };
+            } catch (e) {
+              result = { _type: 'text', value: safeStr(rawResult) };
+            }
+          } else if ((form === 1 || form === 4) && rawResult.value) {
+            const totalLength = rawResult.value.length || 0;
+            result = { _type: 'vector', value: toStringArray(rawResult.value, 1000), totalLength };
+          } else if (form === 5 && rawResult.value) {
+            try {
+              const keys = rawResult.value[0]?.value;
+              const vals = rawResult.value[1]?.value;
+              if (keys && vals) {
+                const totalRows = keys.length || 0;
+                const rows = [];
+                for (let r = 0; r < Math.min(totalRows, 1000); r++) rows.push({ key: safeStr(keys[r]), value: safeStr(vals[r]) });
+                result = { _type: 'table', columns: ['key', 'value'], rows, totalRows };
+              } else {
+                result = { _type: 'text', value: safeStr(rawResult.value) };
+              }
+            } catch (e) {
+              result = { _type: 'text', value: safeStr(rawResult.value) };
+            }
+          } else if (form === 0) {
+            const v = rawResult.value;
+            if (rawResult.type === 0 || v === undefined || v === null) {
+              result = { _type: 'void', value: '(void)' };
+            } else {
+              result = { _type: 'scalar', value: safeStr(v) };
+            }
+          } else {
+            result = { _type: 'text', value: safeStr(rawResult.value !== undefined ? rawResult.value : rawResult) };
+          }
+        } else if (typeof rawResult === 'string') {
+          result = { _type: 'text', value: rawResult };
+        } else {
+          result = { _type: 'text', value: safeStr(rawResult) };
+        }
+        try { JSON.stringify(result); } catch (_) { result = { _type: 'text', value: safeStr(result) }; }
+        console.log(`[Background] DDB_EXECUTE success (attempt ${attempt}): _type=${result._type}, preview=`, JSON.stringify(result)?.substring(0, 300));
         return { result };
       } catch (err) {
-        console.error(`[Background] DDB_EXECUTE failed (attempt ${attempt}/${MAX_RETRIES}):`, err.message);
+        const errorMsg = String(err.message || err);
+        console.error(`[Background] DDB_EXECUTE failed (attempt ${attempt}/${MAX_RETRIES}):`, errorMsg);
+        if (errorMsg.includes('Syntax Error') || errorMsg.includes("Can't recognize")) {
+          throw err;
+        }
         // If connection lost and we have retries left, try to auto-reconnect
         if (attempt < MAX_RETRIES && globalThis.__ddb) {
           console.log(`[Background] DDB_EXECUTE: attempting auto-reconnect...`);
@@ -187,7 +269,6 @@ async function handleRequest(request) {
             const st = globalThis.__ddb.status();
             if (st && st.connected) {
               console.log(`[Background] DDB_EXECUTE: reconnected, retrying...`);
-              // Notify backend of restored status
               if (ws && ws.readyState === WebSocket.OPEN) {
                 const cfg = st.config || {};
                 ws.send(JSON.stringify({
@@ -195,7 +276,7 @@ async function handleRequest(request) {
                   connected: true, host: cfg.host || '', port: cfg.port || 0,
                 }));
               }
-              continue; // retry the execute
+              continue;
             }
           } catch (reconnErr) {
             console.error(`[Background] DDB_EXECUTE: auto-reconnect failed:`, reconnErr.message);

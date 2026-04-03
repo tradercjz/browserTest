@@ -58,10 +58,9 @@ export async function ddbExecute(script) {
 
   try {
     const result = await ddb.eval(script);
-    console.log(`[DDB] ddb.eval success, result type=${result?.constructor?.name}`, JSON.stringify(result)?.substring(0, 200));
-    const formatted = formatResult(result);
-    console.log(`[DDB] formatResult done, formatted_len=${JSON.stringify(formatted)?.length}`);
-    return formatted;
+    console.log(`[DDB] ddb.eval success, result form=${result?.form}, type=${result?.type}`);
+    // Return raw DdbObj — let background.js handle structured conversion
+    return result;
   } catch (err) {
     console.error(`[DDB] ddb.eval failed:`, err.message, err.stack);
     throw err;
