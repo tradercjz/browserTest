@@ -13697,6 +13697,14 @@ async function ddbAutoRestore() {
     });
   });
 }
+async function ddbCall(funcName, args) {
+  if (!ddb || !ddbConnected) throw new Error("DolphinDB \u672A\u8FDE\u63A5");
+  return await ddb.call(funcName, args);
+}
+async function ddbInvoke(funcName, args) {
+  if (!ddb || !ddbConnected) throw new Error("DolphinDB \u672A\u8FDE\u63A5");
+  return await ddb.invoke(funcName, args);
+}
 var ddb, ddbConfig, ddbConnected;
 var init_ddb = __esm({
   "src/ddb.js"() {
@@ -13716,7 +13724,9 @@ var require_ddb_bridge = __commonJS({
       execute: ddbExecute,
       disconnect: ddbDisconnect,
       status: ddbStatus,
-      autoRestore: ddbAutoRestore
+      autoRestore: ddbAutoRestore,
+      call: ddbCall,
+      invoke: ddbInvoke
     };
   }
 });

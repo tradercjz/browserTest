@@ -111,6 +111,16 @@ export async function ddbAutoRestore() {
   });
 }
 
+export async function ddbCall(funcName, args) {
+  if (!ddb || !ddbConnected) throw new Error('DolphinDB 未连接');
+  return await ddb.call(funcName, args);
+}
+
+export async function ddbInvoke(funcName, args) {
+  if (!ddb || !ddbConnected) throw new Error('DolphinDB 未连接');
+  return await ddb.invoke(funcName, args);
+}
+
 /**
  * Format DDB result for display.
  */

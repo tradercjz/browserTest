@@ -287,6 +287,78 @@ async function handleRequest(request) {
     }
   }
 
+  if (request.action === "DDB_CALL") {
+    try {
+      const rawResult = await globalThis.__ddb.call(request.funcName, request.args || []);
+      let result;
+      
+      function safeStr(v) {
+        if (v === null || v === undefined) return '';
+        if (typeof v === 'bigint') return v.toString();
+        return String(v);
+      }
+
+      function toStringArray(arr, maxLen = 1000) {
+        if (!arr) return [];
+        const len = Math.min(arr.length || 0, maxLen);
+        const out = [];
+        for (let i = 0; i < len; i++) {
+          out.push(safeStr(arr[i]));
+        }
+        return out;
+      }
+      
+      if (rawResult && typeof rawResult === 'object' && rawResult.form !== undefined) {
+        const form = rawResult.form;
+        if (form === 6 && rawResult.value) {
+          const columns = rawResult.value;
+          const colNames = [];
+          for (let c = 0; c < columns.length; c++) colNames.push(columns[c].name || `col${c}`);
+          const rowCount = columns[0]?.value?.length || 0;
+          const rows = [];
+          for (let r = 0; r < rowCount; r++) {
+            const row = {};
+            for (let c = 0; c < columns.length; c++) row[colNames[c]] = safeStr(columns[c].value?.[r]);
+            rows.push(row);
+          }
+          result = { _type: 'table', columns: colNames, rows, totalRows: rowCount };
+        } else if ((form === 1 || form === 4) && rawResult.value) {
+          const totalLength = rawResult.value.length || 0;
+          result = { _type: 'vector', value: toStringArray(rawResult.value, 1000), totalLength };
+        } else if (form === 5 && rawResult.value) {
+          try {
+            const keys = rawResult.value[0]?.value;
+            const vals = rawResult.value[1]?.value;
+            if (keys && vals) {
+              const totalRows = keys.length || 0;
+              const rows = [];
+              for (let r = 0; r < Math.min(totalRows, 1000); r++) rows.push({ key: safeStr(keys[r]), value: safeStr(vals[r]) });
+              result = { _type: 'table', columns: ['key', 'value'], rows, totalRows };
+            } else {
+              result = { _type: 'text', value: safeStr(rawResult.value) };
+            }
+          } catch (e) {
+            result = { _type: 'text', value: safeStr(rawResult.value) };
+          }
+        } else if (form === 0) {
+          const v = rawResult.value;
+          if (rawResult.type === 0 || v === undefined || v === null) {
+            result = { _type: 'void', value: '(void)' };
+          } else {
+            result = { _type: 'scalar', value: safeStr(v) };
+          }
+        } else {
+          result = rawResult;
+        }
+      } else {
+        result = rawResult;
+      }
+      return { result };
+    } catch (err) {
+      throw err;
+    }
+  }
+
   if (request.action === "DDB_DISCONNECT") {
     const result = globalThis.__ddb.disconnect();
     // Notify backend that sandbox is disconnected

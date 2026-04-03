@@ -66,7 +66,57 @@
         }
     });
 
-    // 3. Legacy: inject into #extId input if present
+    // 3. Bridge: allow webpage to execute DDB scripts via postMessage
+    window.addEventListener('message', (e) => {
+        if (e.source !== window || !e.data) return;
+
+        // --- Action: Execute Script ---
+        if (e.data.type === 'dolphinmind-execute') {
+            const { requestId, script } = e.data;
+            if (!script || !requestId) return;
+            console.log(`[Injector] DDB_EXECUTE bridge: requestId=${requestId}, script_len=${script.length}`);
+            chrome.runtime.sendMessage({ action: 'DDB_EXECUTE', script }, (resp) => {
+                const runtimeError = chrome.runtime.lastError;
+                const isStatusSuccess = resp && resp.status === 'success';
+                
+                console.log(`[Injector] DDB_EXECUTE result: runtimeError=${runtimeError?.message}, isStatusSuccess=${isStatusSuccess}, resp=`, resp);
+                
+                window.postMessage({
+                    type: 'dolphinmind-execute-result',
+                    requestId,
+                    success: !runtimeError && isStatusSuccess,
+                    data: (resp?.data && resp.data.result !== undefined) ? (typeof resp.data.result === 'object' ? JSON.stringify(resp.data.result) : String(resp.data.result)) : '',
+                    error: runtimeError?.message || (resp?.status === 'error' ? resp.message : ''),
+                }, '*');
+            });
+        }
+
+        // --- Action: Call Function ---
+        if (e.data.type === 'dolphinmind-call') {
+            const { requestId, funcName, args } = e.data;
+            if (!funcName || !requestId) return;
+            chrome.runtime.sendMessage({ action: 'DDB_CALL', funcName, args }, (resp) => {
+                const runtimeError = chrome.runtime.lastError;
+                const isStatusSuccess = resp && resp.status === 'success';
+                
+                window.postMessage({
+                    type: 'dolphinmind-call-result',
+                    requestId,
+                    success: !runtimeError && isStatusSuccess,
+                    data: (resp?.data && resp.data.result !== undefined) ? (typeof resp.data.result === 'object' ? JSON.stringify(resp.data.result) : String(resp.data.result)) : '',
+                    error: runtimeError?.message || (resp?.status === 'error' ? resp.message : ''),
+                }, '*');
+            });
+        }
+
+        // --- Action: Manual Reconnect ---
+        if (e.data.type === 'dolphinmind-connect') {
+            console.log(`[Injector] DDB_CONNECT requested from page...`);
+            syncSandboxConfig(); // This triggers background connection logic
+        }
+    });
+
+    // 4. Legacy: inject into #extId input if present
     function tryInject() {
         const inputField = document.getElementById('extId');
         if (inputField) {

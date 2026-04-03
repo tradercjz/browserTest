@@ -86,9 +86,25 @@
                     type: 'dolphinmind-execute-result',
                     requestId,
                     success: !runtimeError && isStatusSuccess,
-                    // If status is success, result is in resp.data.result
                     data: (resp?.data && resp.data.result !== undefined) ? (typeof resp.data.result === 'object' ? JSON.stringify(resp.data.result) : String(resp.data.result)) : '',
-                    // Error is in runtimeError, or resp.message if status is error
+                    error: runtimeError?.message || (resp?.status === 'error' ? resp.message : ''),
+                }, '*');
+            });
+        }
+
+        // --- Action: Call Function ---
+        if (e.data.type === 'dolphinmind-call') {
+            const { requestId, funcName, args } = e.data;
+            if (!funcName || !requestId) return;
+            chrome.runtime.sendMessage({ action: 'DDB_CALL', funcName, args }, (resp) => {
+                const runtimeError = chrome.runtime.lastError;
+                const isStatusSuccess = resp && resp.status === 'success';
+                
+                window.postMessage({
+                    type: 'dolphinmind-call-result',
+                    requestId,
+                    success: !runtimeError && isStatusSuccess,
+                    data: (resp?.data && resp.data.result !== undefined) ? (typeof resp.data.result === 'object' ? JSON.stringify(resp.data.result) : String(resp.data.result)) : '',
                     error: runtimeError?.message || (resp?.status === 'error' ? resp.message : ''),
                 }, '*');
             });
