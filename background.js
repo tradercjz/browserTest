@@ -130,8 +130,49 @@ chrome.runtime.onMessageExternal.addListener((request, sender, sendResponse) => 
   return true;
 });
 
-// 接收内部 UI 的消息 (如 sidepanel.html)
+// --- Unified Message Listener ---
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  const action = request.action;
+  
+  // 1. Handled internally by listeners if specialized async logic needed
+  if (action === 'SYNC_CLIENT_ID') {
+    getClientId().then(currentId => {
+      if (currentId !== request.clientId) {
+        chrome.storage.local.set({ clientId: request.clientId }, () => {
+          if (ws) { try { ws.close(); } catch {} ws = null; }
+          connectBackend();
+          sendResponse({ status: "success", clientId: request.clientId, reconnecting: true });
+        });
+      } else {
+        sendResponse({ status: "success", clientId: currentId, reconnecting: false });
+      }
+    });
+    return true;
+  }
+
+  if (action === 'SYNC_SANDBOX_CONFIG') {
+    const { host, port, user, pass } = request;
+    const ddbConfig = { host, port: parseInt(port), user, pass };
+    chrome.storage.local.set({ ddbConfig }, async () => {
+      const st = globalThis.__ddb ? globalThis.__ddb.status() : null;
+      if (!st || !st.connected) {
+        try {
+          await globalThis.__ddb.connect(host, parseInt(port), user, pass);
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "NOTIFICATION", action: "DDB_STATUS", connected: true, host, port: parseInt(port) }));
+          }
+          sendResponse({ status: "success", connected: true });
+        } catch (err) {
+          sendResponse({ status: "error", message: err.message });
+        }
+      } else {
+        sendResponse({ status: "success", alreadyConnected: true });
+      }
+    });
+    return true;
+  }
+
+  // 2. Default: Route to handleRequest
   handleRequest(request)
     .then(data => sendResponse({ status: "success", data }))
     .catch(err => sendResponse({ status: "error", message: err.message }));
@@ -197,7 +238,15 @@ async function handleRequest(request) {
         console.log(`[Background] DDB_EXECUTE success (attempt ${attempt}): result_type=${typeof result}, result_preview=`, JSON.stringify(result)?.substring(0, 300));
         return { result };
       } catch (err) {
-        console.error(`[Background] DDB_EXECUTE failed (attempt ${attempt}/${MAX_RETRIES}):`, err.message);
+        const errorMsg = String(err.message || err);
+        console.error(`[Background] DDB_EXECUTE failed (attempt ${attempt}/${MAX_RETRIES}):`, errorMsg);
+        
+        // --- 重点修复：如果是语法错误，说明代码有问题，不需要重连或重试 ---
+        if (errorMsg.includes('Syntax Error') || errorMsg.includes('Can\'t recognize')) {
+           console.log(`[Background] DDB_EXECUTE: Detected syntax error, skipping retries.`);
+           throw err;
+        }
+
         // If connection lost and we have retries left, try to auto-reconnect
         if (attempt < MAX_RETRIES && globalThis.__ddb) {
           console.log(`[Background] DDB_EXECUTE: attempting auto-reconnect...`);
@@ -456,91 +505,6 @@ async function getClientId() {
     });
   });
 }
-
-// Handle SYNC_CLIENT_ID and SYNC_SANDBOX_CONFIG from injector.js (content script)
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === 'SYNC_CLIENT_ID' && message.clientId) {
-    (async () => {
-      const currentId = await getClientId();
-      if (currentId !== message.clientId) {
-        console.log(`[Background] SYNC_CLIENT_ID: changing from ${currentId} to ${message.clientId}`);
-        await new Promise(resolve => {
-          chrome.storage.local.set({ clientId: message.clientId }, resolve);
-        });
-        // Reconnect WebSocket with new clientId
-        if (ws) {
-          try { ws.close(); } catch {}
-          ws = null;
-        }
-        connectBackend();
-        sendResponse({ status: 'ok', clientId: message.clientId, reconnecting: true });
-      } else {
-        console.log(`[Background] SYNC_CLIENT_ID: already using ${currentId}`);
-        sendResponse({ status: 'ok', clientId: currentId, reconnecting: false });
-      }
-    })();
-    return true;
-  }
-
-  if (message.action === 'SYNC_SANDBOX_CONFIG') {
-    (async () => {
-      const { host, port, user, pass } = message;
-      console.log(`[Background] SYNC_SANDBOX_CONFIG: ${host}:${port}`);
-      // Save config so autoRestore can use it
-      const ddbConfig = { host, port: parseInt(port), user, pass };
-      await new Promise(resolve => {
-        chrome.storage.local.set({ ddbConfig }, resolve);
-      });
-      // Auto-connect if not already connected
-      const st = globalThis.__ddb ? globalThis.__ddb.status() : null;
-      if (!st || !st.connected) {
-        try {
-          await globalThis.__ddb.connect(host, parseInt(port), user, pass);
-          console.log(`[Background] SYNC_SANDBOX_CONFIG: auto-connected to ${host}:${port}`);
-          // Notify backend
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-              type: "NOTIFICATION", action: "DDB_STATUS",
-              connected: true, host, port: parseInt(port),
-            }));
-          }
-          sendResponse({ status: 'ok', connected: true });
-        } catch (err) {
-          console.error(`[Background] SYNC_SANDBOX_CONFIG: auto-connect failed:`, err.message);
-          sendResponse({ status: 'error', message: err.message });
-        }
-      } else {
-        console.log(`[Background] SYNC_SANDBOX_CONFIG: already connected`);
-        sendResponse({ status: 'ok', connected: true, alreadyConnected: true });
-      }
-    })();
-    return true;
-  }
-
-  // Handle DDB_EXECUTE from injector.js (content script bridge for webpage)
-  if (message.action === 'DDB_EXECUTE' && message.script) {
-    (async () => {
-      try {
-        const rawResult = await globalThis.__ddb.execute(message.script);
-        let result;
-        if (rawResult === null || rawResult === undefined) {
-          result = '(void)';
-        } else if (typeof rawResult === 'object' && rawResult.value !== undefined) {
-          result = rawResult.value;
-        } else if (typeof rawResult === 'object' && rawResult.toString && rawResult.constructor?.name !== 'Object' && rawResult.constructor?.name !== 'Array') {
-          result = rawResult.toString();
-        } else {
-          result = rawResult;
-        }
-        try { JSON.stringify(result); } catch { result = String(result); }
-        sendResponse({ result });
-      } catch (err) {
-        sendResponse({ error: err.message || 'DDB execution failed' });
-      }
-    })();
-    return true; // keep sendResponse channel open for async
-  }
-});
 
 async function connectBackend() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {

@@ -67,21 +67,38 @@
         }
     });
 
-    // 3. Bridge: allow webpage to execute DDB scripts via CustomEvent
-    window.addEventListener('dolphinmind-execute', (e) => {
-        const { requestId, script } = e.detail || {};
-        if (!script || !requestId) return;
-        chrome.runtime.sendMessage({ action: 'DDB_EXECUTE', script }, (resp) => {
-            const error = chrome.runtime.lastError;
-            window.dispatchEvent(new CustomEvent('dolphinmind-execute-result', {
-                detail: {
+    // 3. Bridge: allow webpage to execute DDB scripts via postMessage
+    window.addEventListener('message', (e) => {
+        if (e.source !== window || !e.data) return;
+
+        // --- Action: Execute Script ---
+        if (e.data.type === 'dolphinmind-execute') {
+            const { requestId, script } = e.data;
+            if (!script || !requestId) return;
+            console.log(`[Injector] DDB_EXECUTE bridge: requestId=${requestId}, script_len=${script.length}`);
+            chrome.runtime.sendMessage({ action: 'DDB_EXECUTE', script }, (resp) => {
+                const runtimeError = chrome.runtime.lastError;
+                const isStatusSuccess = resp && resp.status === 'success';
+                
+                console.log(`[Injector] DDB_EXECUTE result: runtimeError=${runtimeError?.message}, isStatusSuccess=${isStatusSuccess}, resp=`, resp);
+                
+                window.postMessage({
+                    type: 'dolphinmind-execute-result',
                     requestId,
-                    success: !error && resp && !resp.error,
-                    data: resp?.result !== undefined ? String(resp.result) : (resp?.data ? String(resp.data) : ''),
-                    error: error?.message || resp?.error || resp?.message || '',
-                }
-            }));
-        });
+                    success: !runtimeError && isStatusSuccess,
+                    // If status is success, result is in resp.data.result
+                    data: (resp?.data && resp.data.result !== undefined) ? String(resp.data.result) : '',
+                    // Error is in runtimeError, or resp.message if status is error
+                    error: runtimeError?.message || (resp?.status === 'error' ? resp.message : ''),
+                }, '*');
+            });
+        }
+
+        // --- Action: Manual Reconnect ---
+        if (e.data.type === 'dolphinmind-connect') {
+            console.log(`[Injector] DDB_CONNECT requested from page...`);
+            syncSandboxConfig(); // This triggers background connection logic
+        }
     });
 
     // 4. Legacy: inject into #extId input if present
