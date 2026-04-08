@@ -59,6 +59,9 @@ function showMainPanel(user) {
         const nickname = user.nickname || user.username || user.nationalNumber || '已登录';
         document.getElementById('user-info').textContent = `👤 ${nickname}`;
         document.getElementById('user-bar').style.display = 'flex';
+    } else {
+        document.getElementById('user-info').textContent = '👤 已登录';
+        document.getElementById('user-bar').style.display = 'flex';
     }
 }
 

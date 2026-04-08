@@ -50,10 +50,31 @@
         }
     }
 
+    function syncSiteAuth() {
+        try {
+            const raw = localStorage.getItem('dolphindb_site_auth');
+            if (!raw) return;
+            console.log(`🔌 [Injector] Found site auth in localStorage, syncing to background...`);
+            chrome.runtime.sendMessage({
+                action: 'SYNC_SITE_AUTH',
+                rawAuth: raw,
+            }, (resp) => {
+                if (chrome.runtime.lastError) {
+                    console.warn(`🔌 [Injector] Sync site auth failed:`, chrome.runtime.lastError.message);
+                } else {
+                    console.log(`🔌 [Injector] site auth synced:`, resp);
+                }
+            });
+        } catch (e) {
+            console.warn(`🔌 [Injector] Failed to read site auth:`, e);
+        }
+    }
+
     // Try immediately and also after a short delay (page may set it lazily)
     syncClientId();
     syncSandboxConfig();
-    setTimeout(() => { syncClientId(); syncSandboxConfig(); }, 2000);
+    syncSiteAuth();
+    setTimeout(() => { syncClientId(); syncSandboxConfig(); syncSiteAuth(); }, 2000);
 
     // Listen for the page setting clientId/config dynamically
     window.addEventListener('storage', (e) => {
@@ -64,6 +85,10 @@
         if (e.key === 'dolphindb_sandbox_config' && e.newValue) {
             console.log(`🔌 [Injector] sandbox config changed in localStorage`);
             syncSandboxConfig();
+        }
+        if (e.key === 'dolphindb_site_auth') {
+            console.log(`🔌 [Injector] site auth changed in localStorage`);
+            syncSiteAuth();
         }
     });
 

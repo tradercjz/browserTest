@@ -4,6 +4,69 @@ let controlledTabs = new Map(); // tabId -> { title, url }
 let currentGroupId = null;
 const GROUP_TITLE = "DolphinMind Workspace";
 const GROUP_COLOR = "blue";
+const API_URL = 'http://localhost:8007';
+
+async function getAuthToken() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['authToken'], (result) => resolve(result.authToken || null));
+  });
+}
+
+async function setAuthState(token, user) {
+  return new Promise((resolve) => {
+    chrome.storage.local.set({ authToken: token || null, authUser: user || null }, resolve);
+  });
+}
+
+function parseSiteAuthPayload(rawAuth) {
+  try {
+    const parsed = typeof rawAuth === 'string' ? JSON.parse(rawAuth) : rawAuth;
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+
+    const token = parsed.token || parsed.accessToken || parsed.access_token || parsed.data?.token || null;
+    const user = parsed.user || parsed.data?.user || parsed.profile || null;
+    if (!token) {
+      return null;
+    }
+
+    return { token, user };
+  } catch (err) {
+    console.warn(`[Background] Failed to parse site auth payload:`, err.message);
+    return null;
+  }
+}
+
+async function bindClientToBackendUser(clientId) {
+  const token = await getAuthToken();
+  if (!token || !clientId) {
+    return false;
+  }
+
+  try {
+    const response = await fetch(`${API_URL}/api/v1/user/sandbox/bind-client`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ client_id: clientId }),
+    });
+
+    if (!response.ok) {
+      console.warn(`[Background] bind-client failed: HTTP ${response.status}`);
+      return false;
+    }
+
+    const data = await response.json();
+    console.log(`[Background] bind-client success: clientId=${data.client_id}, user_id=${data.user_id}`);
+    return true;
+  } catch (err) {
+    console.warn(`[Background] bind-client request failed:`, err.message);
+    return false;
+  }
+}
 
 // --- 辅助函数：清除页面上的 AI 遮罩和横幅 ---
 async function removeOverlay(tabId) {
@@ -131,29 +194,53 @@ chrome.runtime.onMessageExternal.addListener((request, sender, sendResponse) => 
 });
 
 // --- Unified Message Listener ---
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  const action = request.action;
-  
-  // 1. Handled internally by listeners if specialized async logic needed
-  if (action === 'SYNC_CLIENT_ID') {
-    getClientId().then(currentId => {
-      if (currentId !== request.clientId) {
-        chrome.storage.local.set({ clientId: request.clientId }, () => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'SYNC_CLIENT_ID' && message.clientId) {
+    (async () => {
+      const currentId = await getClientId();
+      if (currentId !== message.clientId) {
+        chrome.storage.local.set({ clientId: message.clientId }, () => {
           if (ws) { try { ws.close(); } catch {} ws = null; }
           connectBackend();
-          sendResponse({ status: "success", clientId: request.clientId, reconnecting: true });
+          sendResponse({ status: "success", clientId: message.clientId, reconnecting: true });
         });
       } else {
         sendResponse({ status: "success", clientId: currentId, reconnecting: false });
       }
+    })();
+    return true;
+  }
+
+  if (message.action === 'SYNC_SITE_AUTH') {
+    (async () => {
+      const auth = parseSiteAuthPayload(message.rawAuth);
+      if (!auth) {
+        console.warn(`[Background] SYNC_SITE_AUTH: missing valid token in site auth payload`);
+        sendResponse({ status: 'error', message: 'invalid auth payload' });
+        return;
+      }
+
+      await setAuthState(auth.token, auth.user);
+      console.log(`[Background] SYNC_SITE_AUTH: auth synced from site, hasUser=${Boolean(auth.user)}`);
+
+      const clientId = await getClientId();
+      await bindClientToBackendUser(clientId);
+      sendResponse({ status: 'success', synced: true, hasUser: Boolean(auth.user) });
+    })().catch((err) => {
+      console.warn(`[Background] SYNC_SITE_AUTH failed:`, err.message);
+      sendResponse({ status: 'error', message: err.message });
     });
     return true;
   }
 
-  if (action === 'SYNC_SANDBOX_CONFIG') {
-    const { host, port, user, pass } = request;
-    const ddbConfig = { host, port: parseInt(port), user, pass };
-    chrome.storage.local.set({ ddbConfig }, async () => {
+  if (message.action === 'SYNC_SANDBOX_CONFIG') {
+    (async () => {
+      const { host, port, user, pass } = message;
+      console.log(`[Background] SYNC_SANDBOX_CONFIG: ${host}:${port}`);
+      const ddbConfig = { host, port: parseInt(port), user, pass };
+      await new Promise(resolve => {
+        chrome.storage.local.set({ ddbConfig }, resolve);
+      });
       const st = globalThis.__ddb ? globalThis.__ddb.status() : null;
       if (!st || !st.connected) {
         try {
@@ -168,12 +255,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       } else {
         sendResponse({ status: "success", alreadyConnected: true });
       }
-    });
+    })();
     return true;
   }
 
   // 2. Default: Route to handleRequest
-  handleRequest(request)
+  handleRequest(message)
     .then(data => sendResponse({ status: "success", data }))
     .catch(err => sendResponse({ status: "error", message: err.message }));
   return true;
@@ -184,7 +271,7 @@ import './dist/ddb-bundle.js';
 
 async function handleRequest(request) {
   // These are handled by dedicated onMessage listeners, skip here
-  if (request.action === 'SYNC_CLIENT_ID' || request.action === 'SYNC_SANDBOX_CONFIG') return { skipped: true };
+  if (request.action === 'SYNC_CLIENT_ID' || request.action === 'SYNC_SANDBOX_CONFIG' || request.action === 'SYNC_SITE_AUTH') return { skipped: true };
 
   if (request.action !== 'GET_STATUS' && request.action !== 'PING' && request.action !== 'PONG') {
     console.log(`[Background] handleRequest: action=${request.action}`, request.tabId ? `tabId=${request.tabId}` : '');
@@ -694,6 +781,7 @@ async function connectBackend() {
   }
 
   const clientId = await getClientId();
+  await bindClientToBackendUser(clientId);
   // 尝试连接本地 Python Agent 测试服务，带上clientId区分前端实例
   ws = new WebSocket(`ws://127.0.0.1:8765/?clientId=${clientId}`);
 
