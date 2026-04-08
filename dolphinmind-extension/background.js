@@ -4,6 +4,43 @@ let controlledTabs = new Map(); // tabId -> { title, url }
 let currentGroupId = null;
 const GROUP_TITLE = "DolphinMind Workspace";
 const GROUP_COLOR = "blue";
+const API_URL = 'http://localhost:8007';
+
+async function getAuthToken() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['authToken'], (result) => resolve(result.authToken || null));
+  });
+}
+
+async function bindClientToBackendUser(clientId) {
+  const token = await getAuthToken();
+  if (!token || !clientId) {
+    return false;
+  }
+
+  try {
+    const response = await fetch(`${API_URL}/api/v1/user/sandbox/bind-client`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ client_id: clientId }),
+    });
+
+    if (!response.ok) {
+      console.warn(`[Background] bind-client failed: HTTP ${response.status}`);
+      return false;
+    }
+
+    const data = await response.json();
+    console.log(`[Background] bind-client success: clientId=${data.client_id}, user_id=${data.user_id}`);
+    return true;
+  } catch (err) {
+    console.warn(`[Background] bind-client request failed:`, err.message);
+    return false;
+  }
+}
 
 // --- 辅助函数：清除页面上的 AI 遮罩和横幅 ---
 async function removeOverlay(tabId) {
@@ -658,6 +695,7 @@ async function connectBackend() {
   }
 
   const clientId = await getClientId();
+  await bindClientToBackendUser(clientId);
   // 尝试连接本地 Python Agent 测试服务，带上clientId区分前端实例
   ws = new WebSocket(`ws://127.0.0.1:8765/?clientId=${clientId}`);
 
