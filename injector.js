@@ -2,12 +2,22 @@
 (function() {
     const extId = chrome.runtime.id;
     const extVersion = chrome.runtime.getManifest().version;
+    const BRIDGE_SOURCE = 'dolphinmind-page-bridge';
 
     // 1. Set a DOM attribute on <html> — DOM is shared between content script and page
     document.documentElement.setAttribute('data-dolphinmind-ext', extVersion);
     document.documentElement.setAttribute('data-dolphinmind-ext-id', extId);
 
     console.log(`🔌 DolphinMind Extension v${extVersion} detected (${extId})`);
+
+    function installPageBridge() {
+        const script = document.createElement('script');
+        script.src = chrome.runtime.getURL('page_bridge.js');
+        (document.documentElement || document.head || document.body).appendChild(script);
+        script.remove();
+    }
+
+    installPageBridge();
 
     // 2. Sync clientId + sandbox config from webpage localStorage → background script
     function syncClientId() {
@@ -89,6 +99,43 @@
         if (e.key === 'dolphindb_site_auth') {
             console.log(`🔌 [Injector] site auth changed in localStorage`);
             syncSiteAuth();
+        }
+    });
+
+    window.addEventListener('message', (e) => {
+        if (e.source !== window || !e.data || e.data.source !== BRIDGE_SOURCE || e.data.type !== 'LOCAL_STORAGE_SYNC') {
+            return;
+        }
+
+        if (e.data.key === 'dolphindb_sandbox_client_id' && e.data.value) {
+            console.log(`🔌 [InjectorBridge] clientId synced from page bridge: ${e.data.value}`);
+            chrome.runtime.sendMessage({ action: 'SYNC_CLIENT_ID', clientId: e.data.value });
+        }
+
+        if (e.data.key === 'dolphindb_sandbox_config' && e.data.value) {
+            console.log(`🔌 [InjectorBridge] sandbox config synced from page bridge`);
+            try {
+                const cfg = JSON.parse(e.data.value);
+                if (cfg && cfg.host && cfg.port && cfg.enabled) {
+                    chrome.runtime.sendMessage({
+                        action: 'SYNC_SANDBOX_CONFIG',
+                        host: cfg.host,
+                        port: parseInt(cfg.port),
+                        user: cfg.username || '',
+                        pass: cfg.password || '',
+                    });
+                }
+            } catch (err) {
+                console.warn(`🔌 [InjectorBridge] Failed to parse sandbox config:`, err);
+            }
+        }
+
+        if (e.data.key === 'dolphindb_site_auth' && e.data.value) {
+            console.log(`🔌 [InjectorBridge] site auth synced from page bridge`);
+            chrome.runtime.sendMessage({
+                action: 'SYNC_SITE_AUTH',
+                rawAuth: e.data.value,
+            });
         }
     });
 

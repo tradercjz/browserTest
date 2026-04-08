@@ -20,6 +20,10 @@ async function setAuthState(token, user) {
 
 function parseSiteAuthPayload(rawAuth) {
   try {
+    if (typeof rawAuth === 'string' && rawAuth.includes('.') && !rawAuth.trim().startsWith('{')) {
+      return { token: rawAuth, user: null };
+    }
+
     const parsed = typeof rawAuth === 'string' ? JSON.parse(rawAuth) : rawAuth;
     if (!parsed || typeof parsed !== 'object') {
       return null;
