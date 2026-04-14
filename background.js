@@ -224,6 +224,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
 
+      const currentToken = await getAuthToken();
+      if (currentToken === auth.token) {
+        sendResponse({ status: 'success', synced: true, hasUser: Boolean(auth.user), skipped: true });
+        return;
+      }
+
       await setAuthState(auth.token, auth.user);
       console.log(`[Background] SYNC_SITE_AUTH: auth synced from site, hasUser=${Boolean(auth.user)}`);
 

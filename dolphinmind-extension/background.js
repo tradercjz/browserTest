@@ -12,6 +12,36 @@ async function getAuthToken() {
   });
 }
 
+async function setAuthState(token, user) {
+  return new Promise((resolve) => {
+    chrome.storage.local.set({ authToken: token || null, authUser: user || null }, resolve);
+  });
+}
+
+function parseSiteAuthPayload(rawAuth) {
+  try {
+    if (typeof rawAuth === 'string' && rawAuth.includes('.') && !rawAuth.trim().startsWith('{')) {
+      return { token: rawAuth, user: null };
+    }
+
+    const parsed = typeof rawAuth === 'string' ? JSON.parse(rawAuth) : rawAuth;
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+
+    const token = parsed.token || parsed.accessToken || parsed.access_token || parsed.data?.token || null;
+    const user = parsed.user || parsed.data?.user || parsed.profile || null;
+    if (!token) {
+      return null;
+    }
+
+    return { token, user };
+  } catch (err) {
+    console.warn(`[Background] Failed to parse site auth payload:`, err.message);
+    return null;
+  }
+}
+
 async function bindClientToBackendUser(clientId) {
   const token = await getAuthToken();
   if (!token || !clientId) {
@@ -167,9 +197,80 @@ chrome.runtime.onMessageExternal.addListener((request, sender, sendResponse) => 
   return true;
 });
 
-// 接收内部 UI 的消息 (如 sidepanel.html)
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  handleRequest(request)
+// --- Unified Message Listener ---
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'SYNC_CLIENT_ID' && message.clientId) {
+    (async () => {
+      const currentId = await getClientId();
+      if (currentId !== message.clientId) {
+        chrome.storage.local.set({ clientId: message.clientId }, () => {
+          if (ws) { try { ws.close(); } catch {} ws = null; }
+          connectBackend();
+          sendResponse({ status: "success", clientId: message.clientId, reconnecting: true });
+        });
+      } else {
+        sendResponse({ status: "success", clientId: currentId, reconnecting: false });
+      }
+    })();
+    return true;
+  }
+
+  if (message.action === 'SYNC_SITE_AUTH') {
+    (async () => {
+      const auth = parseSiteAuthPayload(message.rawAuth);
+      if (!auth) {
+        console.warn(`[Background] SYNC_SITE_AUTH: missing valid token in site auth payload`);
+        sendResponse({ status: 'error', message: 'invalid auth payload' });
+        return;
+      }
+
+      const currentToken = await getAuthToken();
+      if (currentToken === auth.token) {
+        sendResponse({ status: 'success', synced: true, hasUser: Boolean(auth.user), skipped: true });
+        return;
+      }
+
+      await setAuthState(auth.token, auth.user);
+      console.log(`[Background] SYNC_SITE_AUTH: auth synced from site, hasUser=${Boolean(auth.user)}`);
+
+      const clientId = await getClientId();
+      await bindClientToBackendUser(clientId);
+      sendResponse({ status: 'success', synced: true, hasUser: Boolean(auth.user) });
+    })().catch((err) => {
+      console.warn(`[Background] SYNC_SITE_AUTH failed:`, err.message);
+      sendResponse({ status: 'error', message: err.message });
+    });
+    return true;
+  }
+
+  if (message.action === 'SYNC_SANDBOX_CONFIG') {
+    (async () => {
+      const { host, port, user, pass } = message;
+      console.log(`[Background] SYNC_SANDBOX_CONFIG: ${host}:${port}`);
+      const ddbConfig = { host, port: parseInt(port), user, pass };
+      await new Promise(resolve => {
+        chrome.storage.local.set({ ddbConfig }, resolve);
+      });
+      const st = globalThis.__ddb ? globalThis.__ddb.status() : null;
+      if (!st || !st.connected) {
+        try {
+          await globalThis.__ddb.connect(host, parseInt(port), user, pass);
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "NOTIFICATION", action: "DDB_STATUS", connected: true, host, port: parseInt(port) }));
+          }
+          sendResponse({ status: "success", connected: true });
+        } catch (err) {
+          sendResponse({ status: "error", message: err.message });
+        }
+      } else {
+        sendResponse({ status: "success", alreadyConnected: true });
+      }
+    })();
+    return true;
+  }
+
+  // 2. Default: Route to handleRequest
+  handleRequest(message)
     .then(data => sendResponse({ status: "success", data }))
     .catch(err => sendResponse({ status: "error", message: err.message }));
   return true;
@@ -180,7 +281,7 @@ import './dist/ddb-bundle.js';
 
 async function handleRequest(request) {
   // These are handled by dedicated onMessage listeners, skip here
-  if (request.action === 'SYNC_CLIENT_ID' || request.action === 'SYNC_SANDBOX_CONFIG') return { skipped: true };
+  if (request.action === 'SYNC_CLIENT_ID' || request.action === 'SYNC_SANDBOX_CONFIG' || request.action === 'SYNC_SITE_AUTH') return { skipped: true };
 
   if (request.action !== 'GET_STATUS' && request.action !== 'PING' && request.action !== 'PONG') {
     console.log(`[Background] handleRequest: action=${request.action}`, request.tabId ? `tabId=${request.tabId}` : '');
@@ -208,24 +309,6 @@ async function handleRequest(request) {
     console.log(`[Background] DDB_EXECUTE: script_len=${request.script?.length}, id=${request.id}`);
     console.log(`[Background] DDB_EXECUTE script preview:`, request.script?.substring(0, 200));
 
-    // Helper: safely convert a value to string (handles BigInt, typed arrays, etc.)
-    function safeStr(v) {
-      if (v === null || v === undefined) return '';
-      if (typeof v === 'bigint') return v.toString();
-      return String(v);
-    }
-
-    // Helper: convert array-like (TypedArray, Array, BigInt64Array) to string array
-    function toStringArray(arr, maxLen = 1000) {
-      if (!arr) return [];
-      const len = Math.min(arr.length || 0, maxLen);
-      const out = [];
-      for (let i = 0; i < len; i++) {
-        out.push(safeStr(arr[i]));
-      }
-      return out;
-    }
-
     const MAX_RETRIES = 2;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
@@ -233,71 +316,144 @@ async function handleRequest(request) {
         // DdbObj → structured JSON for rich rendering
         let result;
 
+        // Helper: safely convert a value to string (handles BigInt, typed arrays, etc.)
+        function safeStr(v) {
+          if (v === null || v === undefined) return '';
+          if (typeof v === 'bigint') return v.toString();
+          return String(v);
+        }
+
+        // Helper: convert array-like (TypedArray, Array, BigInt64Array) to string array
+        function toStringArray(arr, maxLen = 1000) {
+          if (!arr) return [];
+          const len = Math.min(arr.length || 0, maxLen);
+          const out = [];
+          for (let i = 0; i < len; i++) {
+            out.push(safeStr(arr[i]));
+          }
+          return out;
+        }
+
         if (rawResult === null || rawResult === undefined) {
           result = { _type: 'void', value: '(void)' };
         } else if (typeof rawResult === 'object' && rawResult.form !== undefined) {
+          // DdbObj: check form to determine type
+          // form: 0=scalar, 1=vector, 2=pair, 3=matrix, 4=set, 5=dict, 6=table
           const form = rawResult.form;
           if (form === 6 && rawResult.value) {
-            // Table
+            // Table: rawResult.value is array of DdbObj columns
             try {
               const columns = rawResult.value;
               const colNames = [];
-              for (let c = 0; c < columns.length; c++) colNames.push(columns[c].name || `col${c}`);
+              for (let c = 0; c < columns.length; c++) {
+                colNames.push(columns[c].name || `col${c}`);
+              }
+              // Get row count from first column's value length
               const firstColVal = columns[0]?.value;
               const rowCount = firstColVal ? (firstColVal.length || 0) : 0;
               const maxRows = Math.min(rowCount, 1000);
               const rows = [];
               for (let r = 0; r < maxRows; r++) {
                 const row = {};
-                for (let c = 0; c < columns.length; c++) row[colNames[c]] = safeStr(columns[c].value?.[r]);
+                for (let c = 0; c < columns.length; c++) {
+                  row[colNames[c]] = safeStr(columns[c].value?.[r]);
+                }
                 rows.push(row);
               }
               result = { _type: 'table', columns: colNames, rows, totalRows: rowCount };
             } catch (e) {
+              console.error('[Background] Table parsing failed:', e);
               result = { _type: 'text', value: safeStr(rawResult) };
             }
           } else if ((form === 1 || form === 4) && rawResult.value) {
+            // Vector (form=1) or Set (form=4)
             const totalLength = rawResult.value.length || 0;
-            result = { _type: 'vector', value: toStringArray(rawResult.value, 1000), totalLength };
+            const arr = toStringArray(rawResult.value, 1000);
+            result = { _type: 'vector', value: arr, totalLength };
+          } else if (form === 2 && rawResult.value) {
+            // Pair
+            const arr = toStringArray(rawResult.value, 2);
+            result = { _type: 'vector', value: arr, totalLength: 2 };
           } else if (form === 5 && rawResult.value) {
+            // Dict: value is [keys_vector, values_vector]
             try {
               const keys = rawResult.value[0]?.value;
               const vals = rawResult.value[1]?.value;
               if (keys && vals) {
+                const columns = ['key', 'value'];
                 const totalRows = keys.length || 0;
+                const maxRows = Math.min(totalRows, 1000);
                 const rows = [];
-                for (let r = 0; r < Math.min(totalRows, 1000); r++) rows.push({ key: safeStr(keys[r]), value: safeStr(vals[r]) });
-                result = { _type: 'table', columns: ['key', 'value'], rows, totalRows };
+                for (let r = 0; r < maxRows; r++) {
+                  rows.push({ key: safeStr(keys[r]), value: safeStr(vals[r]) });
+                }
+                result = { _type: 'table', columns, rows, totalRows };
               } else {
                 result = { _type: 'text', value: safeStr(rawResult.value) };
               }
             } catch (e) {
               result = { _type: 'text', value: safeStr(rawResult.value) };
             }
+          } else if (form === 3 && rawResult.value) {
+            // Matrix: render as table with row/col indices
+            try {
+              const data = rawResult.value;
+              const mRows = rawResult.rows || 0;
+              const mCols = rawResult.columns || 0;
+              const columns = [];
+              for (let c = 0; c < mCols; c++) columns.push(`C${c}`);
+              const rows = [];
+              const maxRows = Math.min(mRows, 500);
+              for (let r = 0; r < maxRows; r++) {
+                const row = {};
+                for (let c = 0; c < mCols; c++) {
+                  row[`C${c}`] = safeStr(data[c * mRows + r]);
+                }
+                rows.push(row);
+              }
+              result = { _type: 'table', columns, rows, totalRows: mRows };
+            } catch (e) {
+              result = { _type: 'text', value: safeStr(rawResult.value) };
+            }
           } else if (form === 0) {
+            // Scalar
             const v = rawResult.value;
+            // DdbType.void = 0
             if (rawResult.type === 0 || v === undefined || v === null) {
               result = { _type: 'void', value: '(void)' };
             } else {
               result = { _type: 'scalar', value: safeStr(v) };
             }
           } else {
+            // Other forms: stringify safely
             result = { _type: 'text', value: safeStr(rawResult.value !== undefined ? rawResult.value : rawResult) };
           }
         } else if (typeof rawResult === 'string') {
+          // Already formatted string (legacy fallback)
           result = { _type: 'text', value: rawResult };
+        } else if (typeof rawResult === 'object' && rawResult.value !== undefined) {
+          result = { _type: 'text', value: safeStr(rawResult.value) };
         } else {
           result = { _type: 'text', value: safeStr(rawResult) };
         }
-        try { JSON.stringify(result); } catch (_) { result = { _type: 'text', value: safeStr(result) }; }
+        // Final safety: ensure result is JSON-serializable (handles BigInt in nested objects)
+        try {
+          JSON.stringify(result);
+        } catch (_) {
+          result = { _type: 'text', value: safeStr(result) };
+        }
         console.log(`[Background] DDB_EXECUTE success (attempt ${attempt}): _type=${result._type}, preview=`, JSON.stringify(result)?.substring(0, 300));
         return { result };
       } catch (err) {
         const errorMsg = String(err.message || err);
         console.error(`[Background] DDB_EXECUTE failed (attempt ${attempt}/${MAX_RETRIES}):`, errorMsg);
-        if (errorMsg.includes('Syntax Error') || errorMsg.includes("Can't recognize")) {
-          throw err;
+        
+        // --- 重点修复：如果是语法错误，说明代码有问题，不需要重连或重试 ---
+        if (errorMsg.includes('Syntax Error') || errorMsg.includes('Can\'t recognize')) {
+           console.log(`[Background] DDB_EXECUTE: Detected syntax error, skipping retries.`);
+           throw err;
         }
+
         // If connection lost and we have retries left, try to auto-reconnect
         if (attempt < MAX_RETRIES && globalThis.__ddb) {
           console.log(`[Background] DDB_EXECUTE: attempting auto-reconnect...`);
@@ -306,6 +462,7 @@ async function handleRequest(request) {
             const st = globalThis.__ddb.status();
             if (st && st.connected) {
               console.log(`[Background] DDB_EXECUTE: reconnected, retrying...`);
+              // Notify backend of restored status
               if (ws && ws.readyState === WebSocket.OPEN) {
                 const cfg = st.config || {};
                 ws.send(JSON.stringify({
@@ -313,7 +470,7 @@ async function handleRequest(request) {
                   connected: true, host: cfg.host || '', port: cfg.port || 0,
                 }));
               }
-              continue;
+              continue; // retry the execute
             }
           } catch (reconnErr) {
             console.error(`[Background] DDB_EXECUTE: auto-reconnect failed:`, reconnErr.message);
@@ -628,67 +785,6 @@ async function getClientId() {
   });
 }
 
-// Handle SYNC_CLIENT_ID and SYNC_SANDBOX_CONFIG from injector.js (content script)
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === 'SYNC_CLIENT_ID' && message.clientId) {
-    (async () => {
-      const currentId = await getClientId();
-      if (currentId !== message.clientId) {
-        console.log(`[Background] SYNC_CLIENT_ID: changing from ${currentId} to ${message.clientId}`);
-        await new Promise(resolve => {
-          chrome.storage.local.set({ clientId: message.clientId }, resolve);
-        });
-        // Reconnect WebSocket with new clientId
-        if (ws) {
-          try { ws.close(); } catch {}
-          ws = null;
-        }
-        connectBackend();
-        sendResponse({ status: 'ok', clientId: message.clientId, reconnecting: true });
-      } else {
-        console.log(`[Background] SYNC_CLIENT_ID: already using ${currentId}`);
-        sendResponse({ status: 'ok', clientId: currentId, reconnecting: false });
-      }
-    })();
-    return true;
-  }
-
-  if (message.action === 'SYNC_SANDBOX_CONFIG') {
-    (async () => {
-      const { host, port, user, pass } = message;
-      console.log(`[Background] SYNC_SANDBOX_CONFIG: ${host}:${port}`);
-      // Save config so autoRestore can use it
-      const ddbConfig = { host, port: parseInt(port), user, pass };
-      await new Promise(resolve => {
-        chrome.storage.local.set({ ddbConfig }, resolve);
-      });
-      // Auto-connect if not already connected
-      const st = globalThis.__ddb ? globalThis.__ddb.status() : null;
-      if (!st || !st.connected) {
-        try {
-          await globalThis.__ddb.connect(host, parseInt(port), user, pass);
-          console.log(`[Background] SYNC_SANDBOX_CONFIG: auto-connected to ${host}:${port}`);
-          // Notify backend
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-              type: "NOTIFICATION", action: "DDB_STATUS",
-              connected: true, host, port: parseInt(port),
-            }));
-          }
-          sendResponse({ status: 'ok', connected: true });
-        } catch (err) {
-          console.error(`[Background] SYNC_SANDBOX_CONFIG: auto-connect failed:`, err.message);
-          sendResponse({ status: 'error', message: err.message });
-        }
-      } else {
-        console.log(`[Background] SYNC_SANDBOX_CONFIG: already connected`);
-        sendResponse({ status: 'ok', connected: true, alreadyConnected: true });
-      }
-    })();
-    return true;
-  }
-});
-
 let isConnecting = false;
 
 async function connectBackend() {
@@ -752,11 +848,10 @@ async function connectBackend() {
 
         console.log(`[Background] 收到后端指令: id=${req.id} action=${req.action}`);
         const data = await handleRequest(req);
-        const response = { id: req.id, status: "success", data: data };
-        console.log(`[Background] 指令成功: id=${req.id} action=${req.action}, response_size=${JSON.stringify(response).length}`);
-        ws.send(JSON.stringify(response));
+        ws.send(JSON.stringify({ id: req.id, status: "success", data: data }));
+        console.log(`[Background] 指令成功: id=${req.id} action=${req.action}`);
       } catch (err) {
-        console.error(`[Background] 指令失败: id=${req.id} action=${req.action}`, err.message, err.stack);
+        console.error(`[Background] 指令失败: id=${req.id} action=${req.action}`, err.message);
         ws.send(JSON.stringify({ id: req.id, status: "error", message: err.message }));
       }
     };
