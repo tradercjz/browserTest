@@ -779,89 +779,96 @@ async function getClientId() {
   });
 }
 
+let isConnecting = false;
+
 async function connectBackend() {
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+  if (isConnecting || (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING))) {
     return;
   }
 
-  const clientId = await getClientId();
-  await bindClientToBackendUser(clientId);
-  // 尝试连接本地 Python Agent 测试服务，带上clientId区分前端实例
-  ws = new WebSocket(`ws://127.0.0.1:8765/?clientId=${clientId}`);
+  isConnecting = true;
+  try {
+    const clientId = await getClientId();
+    await bindClientToBackendUser(clientId);
+    // 尝试连接本地 Python Agent 测试服务，带上clientId区分前端实例
+    ws = new WebSocket(`ws://127.0.0.1:8765/?clientId=${clientId}`);
 
-  ws.onopen = () => {
-    console.log("✅ 已连接到 Agent 后端服务器");
+    ws.onopen = () => {
+      console.log("✅ 已连接到 Agent 后端服务器");
 
-    // 连接成功后，清除尝试重连的 Alarm
-    chrome.alarms.clear('websocket-reconnect-alarm');
+      // 连接成功后，清除尝试重连的 Alarm
+      chrome.alarms.clear('websocket-reconnect-alarm');
 
-    // 增加心跳保活机制，防止 Chrome Service Worker 因为 30 秒静默被挂起导致断连
-    if (keepAliveTimer) clearInterval(keepAliveTimer);
-    keepAliveTimer = setInterval(() => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ id: "ping", action: "PING" }));
-      }
-    }, 20000); // 20秒发送一次乒乓
-
-    // 如果当前已经是接管状态，同步给后端
-    if (controlledTabs.size > 0) {
-      for (const [tabId, info] of controlledTabs.entries()) {
-        notifyBackend("ATTACHED", tabId, info.title, info.url);
-      }
-    }
-
-    // 同步 DDB 连接状态给后端（重连后后端 ddb_status 是空的）
-    if (globalThis.__ddb) {
-      try {
-        const ddbSt = globalThis.__ddb.status();
-        if (ddbSt && ddbSt.connected) {
-          const cfg = ddbSt.config || {};
-          console.log(`[Background] Re-syncing DDB status on connect:`, ddbSt);
-          ws.send(JSON.stringify({
-            type: "NOTIFICATION",
-            action: "DDB_STATUS",
-            connected: true,
-            host: cfg.host || '',
-            port: cfg.port || 0,
-          }));
+      // 增加心跳保活机制，防止 Chrome Service Worker 因为 30 秒静默被挂起导致断连
+      if (keepAliveTimer) clearInterval(keepAliveTimer);
+      keepAliveTimer = setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ id: "ping", action: "PING" }));
         }
-      } catch (e) {
-        console.warn(`[Background] Failed to sync DDB status on connect:`, e.message);
+      }, 20000); // 20秒发送一次乒乓
+
+      // 如果当前已经是接管状态，同步给后端
+      if (controlledTabs.size > 0) {
+        for (const [tabId, info] of controlledTabs.entries()) {
+          notifyBackend("ATTACHED", tabId, info.title, info.url);
+        }
       }
-    }
-  };
 
-  ws.onmessage = async (event) => {
-    const req = JSON.parse(event.data);
-    try {
-      if (req.action === "PING" || req.action === "PONG") return; // 忽略心跳包
+      // 同步 DDB 连接状态给后端（重连后后端 ddb_status 是空的）
+      if (globalThis.__ddb) {
+        try {
+          const ddbSt = globalThis.__ddb.status();
+          if (ddbSt && ddbSt.connected) {
+            const cfg = ddbSt.config || {};
+            console.log(`[Background] Re-syncing DDB status on connect:`, ddbSt);
+            ws.send(JSON.stringify({
+              type: "NOTIFICATION",
+              action: "DDB_STATUS",
+              connected: true,
+              host: cfg.host || '',
+              port: cfg.port || 0,
+            }));
+          }
+        } catch (e) {
+          console.warn(`[Background] Failed to sync DDB status on connect:`, e.message);
+        }
+      }
+    };
 
-      console.log(`[Background] 收到后端指令: id=${req.id} action=${req.action}`);
-      const data = await handleRequest(req);
-      ws.send(JSON.stringify({ id: req.id, status: "success", data: data }));
-      console.log(`[Background] 指令成功: id=${req.id} action=${req.action}`);
-    } catch (err) {
-      console.error(`[Background] 指令失败: id=${req.id} action=${req.action}`, err.message);
-      ws.send(JSON.stringify({ id: req.id, status: "error", message: err.message }));
-    }
-  };
+    ws.onmessage = async (event) => {
+      const req = JSON.parse(event.data);
+      try {
+        if (req.action === "PING" || req.action === "PONG") return; // 忽略心跳包
 
-  ws.onerror = (err) => {
-    console.log("⚠️ WebSocket 出错，无法连接后端服务");
-  };
+        console.log(`[Background] 收到后端指令: id=${req.id} action=${req.action}`);
+        const data = await handleRequest(req);
+        ws.send(JSON.stringify({ id: req.id, status: "success", data: data }));
+        console.log(`[Background] 指令成功: id=${req.id} action=${req.action}`);
+      } catch (err) {
+        console.error(`[Background] 指令失败: id=${req.id} action=${req.action}`, err.message);
+        ws.send(JSON.stringify({ id: req.id, status: "error", message: err.message }));
+      }
+    };
 
-  ws.onclose = () => {
-    console.log("❌ WebSocket 断开，自动重连机制激活中...");
-    ws = null;
-    if (keepAliveTimer) {
-      clearInterval(keepAliveTimer);
-      keepAliveTimer = null;
-    }
-    // 立即启动一个定期检查的 Alarm (MV3 允许开发模式使用较小的 periodInMinutes，默认为1)
-    chrome.alarms.create('websocket-reconnect-alarm', { periodInMinutes: 0.1 });
-    // 同时保留短周期重连（对于 Service Worker 还没休眠的时候）
-    setTimeout(connectBackend, 3000);
-  };
+    ws.onerror = (err) => {
+      console.log("⚠️ WebSocket 出错，无法连接后端服务");
+    };
+
+    ws.onclose = () => {
+      console.log("❌ WebSocket 断开，自动重连机制激活中...");
+      ws = null;
+      if (keepAliveTimer) {
+        clearInterval(keepAliveTimer);
+        keepAliveTimer = null;
+      }
+      // 立即启动一个定期检查的 Alarm (MV3 允许开发模式使用较小的 periodInMinutes，默认为1)
+      chrome.alarms.create('websocket-reconnect-alarm', { periodInMinutes: 0.1 });
+      // 同时保留短周期重连（对于 Service Worker 还没休眠的时候）
+      setTimeout(connectBackend, 3000);
+    };
+  } finally {
+    isConnecting = false;
+  }
 }
 
 // 允许点击插件图标时打开侧边栏
